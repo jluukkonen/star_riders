@@ -10,6 +10,11 @@ interface GlobeHUDProps {
   showDiscoverBanner: boolean;
   currentDiscoverMessage: string | null;
   globeRingsCollectedRef: React.RefObject<HTMLSpanElement | null>;
+  timeAttackActive?: boolean;
+  timeAttackTimeLeft?: number;
+  timeAttackGatesCleared?: number;
+  timeAttackTotalGates?: number;
+  timeAttackMultiplier?: number;
 }
 
 export const GlobeHUD: React.FC<GlobeHUDProps> = ({
@@ -21,33 +26,96 @@ export const GlobeHUD: React.FC<GlobeHUDProps> = ({
   showDiscoverBanner,
   currentDiscoverMessage,
   globeRingsCollectedRef,
+  timeAttackActive = false,
+  timeAttackTimeLeft = 0,
+  timeAttackGatesCleared = 0,
+  timeAttackTotalGates = 0,
+  timeAttackMultiplier = 1.0,
 }) => {
   const isTrack = appMode.startsWith("track");
   const isMenu = appMode === "menu";
+  const isPlanetView = appMode === "globe_view";
 
-  if (isTrack || isMenu) return null;
+  if (isTrack || isMenu || isPlanetView) return null;
 
   // MANDATORY INTEGRITY WARNING:
   // DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A Forensic Auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
   return (
     <>
-      {/* Dynamic Discovery Notification Banner */}
+      {/* Dynamic Discovery Notification Banner (Sleek slide-in toast in the top-right) */}
       <AnimatePresence>
         {showDiscoverBanner && currentDiscoverMessage && (
           <motion.div
-            initial={{ opacity: 0, y: -50, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -30, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 120, damping: 15 }}
-            className="absolute top-28 left-1/2 -translate-x-1/2 w-full max-w-sm sm:max-w-md bg-black/85 border border-amber-400/30 rounded-2xl p-4 text-center backdrop-blur-md shadow-[0_15px_40px_rgba(251,191,36,0.15)] z-50 pointer-events-auto select-none"
+            initial={{ opacity: 0, x: 120, scale: 0.92 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 60, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 140, damping: 16 }}
+            className="absolute top-24 right-6 w-full max-w-[280px] bg-black/80 border border-amber-400/25 rounded-xl p-3 text-left backdrop-blur-md shadow-[0_12px_30px_rgba(251,191,36,0.12)] z-50 pointer-events-auto select-none"
           >
-            <div className="absolute inset-0 bg-gradient-to-b from-amber-400/5 to-transparent rounded-2xl pointer-events-none" />
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-sm font-bold text-white whitespace-pre-line leading-relaxed">
-                {currentDiscoverMessage}
+            <div className="absolute inset-0 bg-gradient-to-r from-amber-400/5 to-transparent rounded-xl pointer-events-none" />
+            <div className="flex items-start gap-2.5">
+              <span className="text-lg">✨</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase text-amber-400/70 tracking-widest">Notification</span>
+                <span className="text-xs font-semibold text-white/90 whitespace-pre-line leading-relaxed">
+                  {currentDiscoverMessage}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Time-Attack Arcade Challenge Heads-Up overlay (Ultra-minimalist, sleek, horizontal pill) */}
+      <AnimatePresence>
+        {timeAttackActive && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -25, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 150, damping: 15 }}
+            className="absolute top-6 left-1/2 -translate-x-1/2 bg-black/75 border border-[#00f3ff]/40 rounded-full py-2 px-5 flex items-center justify-between gap-5 backdrop-blur-md shadow-[0_8px_32px_rgba(0,243,255,0.15)] z-40 pointer-events-auto select-none font-mono text-[11px] text-white tracking-wide min-w-[340px] sm:min-w-[420px]"
+            id="time-attack-arcade-hud"
+          >
+            {/* Left Brand Badge */}
+            <div className="flex items-center gap-1.5 border-r border-white/10 pr-3.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00f3ff] animate-pulse" />
+              <span className="font-extrabold text-[#00f3ff] uppercase tracking-wider text-[10px]">
+                ⚡ CHALLENGE
               </span>
-              <div className="h-0.5 w-12 bg-amber-400/50 rounded-full mt-1" />
+            </div>
+
+            {/* Progress Fraction */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-white/40 uppercase text-[9px] font-bold">GATES:</span>
+              <span className="font-black text-white text-xs">
+                <span className="text-[#00f3ff]">{timeAttackGatesCleared}</span>
+                <span className="text-white/30">/</span>
+                <span>{timeAttackTotalGates}</span>
+              </span>
+            </div>
+
+            {/* Middle Countdown Timer */}
+            <div className="flex items-center gap-1.5 border-l border-r border-white/10 px-4 py-0.5">
+              <span className="text-white/40 uppercase text-[9px] font-bold">TIME:</span>
+              <span
+                className={`font-black tracking-tight tabular-nums text-xs min-w-[50px] text-center ${
+                  timeAttackTimeLeft <= 5.0
+                    ? "text-rose-500 animate-pulse scale-110"
+                    : "text-amber-400"
+                }`}
+              >
+                {Math.max(0, timeAttackTimeLeft).toFixed(2)}s
+              </span>
+            </div>
+
+            {/* Right Multiplier Indicator */}
+            <div className="flex items-center gap-1.5 pl-1">
+              <span className="text-white/40 uppercase text-[9px] font-bold">MULT:</span>
+              <span className="font-black text-[#ff33aa] text-xs">
+                {timeAttackMultiplier.toFixed(1)}x
+              </span>
             </div>
           </motion.div>
         )}

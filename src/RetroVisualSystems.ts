@@ -464,7 +464,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
   private gltfLoader = new GLTFLoader();
   private instancedMeshes: THREE.InstancedMesh[] = [];
   private gltfLoaded = false;
-  private invisibleMatrix = new THREE.Matrix4().makeTranslation(0, -9999, 0);
+  private invisibleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 
   constructor(
     private trackCurve: THREE.Curve<THREE.Vector3>,
@@ -625,13 +625,13 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
     parent.add(this.group);
 
     if (this.useGLB) {
-      // Load High-LOD GLB Spiked Spheres
+      // Load High-LOD GLB Neon Quantum Sentinel
       const sessionToken = Math.random();
-      (parent as any)._spikedSpheresSession = sessionToken;
+      (parent as any)._neonSentinelSession = sessionToken;
       this.gltfLoader.load(
-        "/Meshy_AI_Cosmic_Spiked_Spheres_0607091718_texture.glb",
+        "/Meshy_AI_Neon_Quantum_Sentinel_0614142055_texture.glb",
         (gltf) => {
-          if ((parent as any)._spikedSpheresSession !== sessionToken) return;
+          if ((parent as any)._neonSentinelSession !== sessionToken) return;
 
           const sourceMeshes: THREE.Mesh[] = [];
           gltf.scene.traverse((child) => {
@@ -662,9 +662,9 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
               matClone,
               this.list.length
             );
-            instMesh.castShadow = true;
-            instMesh.receiveShadow = true;
-            instMesh.frustumCulled = false;
+            instMesh.castShadow = false;
+            instMesh.receiveShadow = false;
+            instMesh.frustumCulled = true;
             parent.add(instMesh);
             return instMesh;
           });
@@ -672,7 +672,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
           this.gltfLoaded = true;
         },
         undefined,
-        (err) => console.error("Error loading Spiked Spheres GLB:", err)
+        (err) => console.error("Error loading Neon Quantum Sentinel GLB:", err)
       );
     }
   }
@@ -705,7 +705,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
 
       // 4. Smooth LOD and Loading Toggle
       if (this.gltfLoaded && dist < lodThreshold && this.instancedMeshes.length > 0) {
-        // High LOD: Show beautiful glowing GLB spiked sphere, hide simple procedural crystal
+        // High LOD: Show beautiful glowing GLB Neon Quantum Sentinel, hide simple procedural crystal
         item.mesh.children[0].visible = false;
         item.mesh.children[1].visible = false;
 
@@ -752,12 +752,29 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
     laserCurtain: THREE.Mesh;
     flashTimer: number;
     index: number;
+    topCanvas?: HTMLCanvasElement;
+    topTex?: THREE.CanvasTexture;
+    leftCanvas?: HTMLCanvasElement;
+    leftTex?: THREE.CanvasTexture;
+    rightCanvas?: HTMLCanvasElement;
+    rightTex?: THREE.CanvasTexture;
+    strobes?: THREE.Mesh[];
+    topScreenMesh?: THREE.Mesh;
+    leftSideMesh?: THREE.Mesh;
+    rightSideMesh?: THREE.Mesh;
+    lastLap?: number;
+    lastSpeed?: number;
+    lastDrawTime?: number;
   }[] = [];
 
   private gateLoader = new GLTFLoader();
   private gateInstMeshes: THREE.InstancedMesh[] = [];
   private gateLoaded = false;
-  private invisibleMatrix = new THREE.Matrix4().makeTranslation(0, -9999, 0);
+  private invisibleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+  private gateMinY = 0;
+  private gateWidth = 1;
+  private gateOffsetX = 0;
+  private gateOffsetZ = 0;
 
   constructor(
     private trackCurve: THREE.Curve<THREE.Vector3>,
@@ -964,6 +981,66 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
       signMesh.position.set(0, this.useGLB ? 17.5 : 15.0, 0.4);
       gateGroup.add(signMesh);
 
+      let topCanvas: HTMLCanvasElement | undefined;
+      let topTex: THREE.CanvasTexture | undefined;
+      let leftCanvas: HTMLCanvasElement | undefined;
+      let leftTex: THREE.CanvasTexture | undefined;
+      let rightCanvas: HTMLCanvasElement | undefined;
+      let rightTex: THREE.CanvasTexture | undefined;
+      let strobes: THREE.Mesh[] = [];
+      let topScreenMesh: THREE.Mesh | undefined;
+      let leftSideMesh: THREE.Mesh | undefined;
+      let rightSideMesh: THREE.Mesh | undefined;
+
+      if (this.useGLB) {
+        // 1. Top screen marquee canvas
+        topCanvas = document.createElement("canvas");
+        topCanvas.width = 512;
+        topCanvas.height = 64;
+        topTex = new THREE.CanvasTexture(topCanvas);
+        const topMat = new THREE.MeshBasicMaterial({ map: topTex, side: THREE.DoubleSide });
+        topScreenMesh = new THREE.Mesh(new THREE.BoxGeometry(16, 2, 0.2), topMat);
+        topScreenMesh.position.set(0, 20.8, 0.2);
+        topScreenMesh.name = "topScreen";
+        gateGroup.add(topScreenMesh);
+
+        // 2. Left side screen canvas
+        leftCanvas = document.createElement("canvas");
+        leftCanvas.width = 64;
+        leftCanvas.height = 256;
+        leftTex = new THREE.CanvasTexture(leftCanvas);
+        const leftMat = new THREE.MeshBasicMaterial({ map: leftTex, side: THREE.DoubleSide });
+        leftSideMesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, 9.0, 0.2), leftMat);
+        leftSideMesh.position.set(-17.3, 8.0, 0.2);
+        leftSideMesh.name = "leftSideScreen";
+        gateGroup.add(leftSideMesh);
+
+        // 3. Right side screen canvas
+        rightCanvas = document.createElement("canvas");
+        rightCanvas.width = 64;
+        rightCanvas.height = 256;
+        rightTex = new THREE.CanvasTexture(rightCanvas);
+        const rightMat = new THREE.MeshBasicMaterial({ map: rightTex, side: THREE.DoubleSide });
+        rightSideMesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, 9.0, 0.2), rightMat);
+        rightSideMesh.position.set(17.3, 8.0, 0.2);
+        rightSideMesh.name = "rightSideScreen";
+        gateGroup.add(rightSideMesh);
+
+        // 4. Strobe Lights (Spheres)
+        const strobeGeo = new THREE.SphereGeometry(0.35, 8, 8);
+        const sl1 = new THREE.Mesh(strobeGeo, new THREE.MeshBasicMaterial({ color: 0xff0000, toneMapped: false }));
+        sl1.position.set(-18.5, 22.0, 0.2);
+        const sl2 = new THREE.Mesh(strobeGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff, toneMapped: false }));
+        sl2.position.set(-17.0, 22.0, 0.2);
+        const sr1 = new THREE.Mesh(strobeGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff, toneMapped: false }));
+        sr1.position.set(17.0, 22.0, 0.2);
+        const sr2 = new THREE.Mesh(strobeGeo, new THREE.MeshBasicMaterial({ color: 0xff0000, toneMapped: false }));
+        sr2.position.set(18.5, 22.0, 0.2);
+
+        gateGroup.add(sl1, sl2, sr1, sr2);
+        strobes.push(sl1, sl2, sr1, sr2);
+      }
+
       this.group.add(gateGroup);
 
       this.list.push({
@@ -974,6 +1051,19 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
         laserCurtain,
         flashTimer: 0,
         index: g,
+        topCanvas,
+        topTex,
+        leftCanvas,
+        leftTex,
+        rightCanvas,
+        rightTex,
+        strobes,
+        topScreenMesh,
+        leftSideMesh,
+        rightSideMesh,
+        lastLap: -1,
+        lastSpeed: -1,
+        lastDrawTime: 0,
       });
     }
 
@@ -984,9 +1074,21 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
       const sessionToken = Math.random();
       (parent as any)._neonGateSession = sessionToken;
       this.gateLoader.load(
-        "/Meshy_AI_Futuristic_Neon_Gate_0610201353_texture.glb",
+        "/Meshy_AI_Futuristic_Neon_Gate_0614142038_texture.glb",
         (gltf) => {
           if ((parent as any)._neonGateSession !== sessionToken) return;
+
+          // Compute bounding box and center to align and scale the gate perfectly
+          const box = new THREE.Box3().setFromObject(gltf.scene);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+
+          this.gateWidth = size.x;
+          this.gateMinY = box.min.y;
+          this.gateOffsetX = center.x;
+          this.gateOffsetZ = center.z;
 
           const sourceMeshes: THREE.Mesh[] = [];
           gltf.scene.traverse((child) => {
@@ -1018,9 +1120,9 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
               matClone,
               this.list.length
             );
-            instMesh.castShadow = true;
+            instMesh.castShadow = false;
             instMesh.receiveShadow = true;
-            instMesh.frustumCulled = false;
+            instMesh.frustumCulled = true;
             parent.add(instMesh);
             return instMesh;
           });
@@ -1037,6 +1139,7 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
   }
 
   update(dt: number, player: PlayerState) {
+    const elapsed = Date.now() * 0.001;
     const playerPos = player.position || new THREE.Vector3(0, 0, 0);
     const lodThreshold = 800; // Generous viewing distance
     const dummy = new THREE.Object3D();
@@ -1082,14 +1185,99 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
       const dist = playerPos.distanceTo(item.gateGroup.position);
       item.gateGroup.updateMatrixWorld(true);
 
+      // Flash safety beacons for the GLB gate alternating corners
+      if (this.useGLB && item.strobes && item.strobes.length >= 4) {
+        const timeTick = Math.floor(elapsed * 12.0) % 4;
+        const color1 = (timeTick === 0 || timeTick === 2) ? 0xff00bb : 0x110005;
+        const color2 = (timeTick === 1 || timeTick === 3) ? 0x00ffff : 0x001111;
+        
+        (item.strobes[0].material as THREE.MeshBasicMaterial).color.setHex(color1);
+        (item.strobes[1].material as THREE.MeshBasicMaterial).color.setHex(color2);
+        (item.strobes[2].material as THREE.MeshBasicMaterial).color.setHex(color2);
+        (item.strobes[3].material as THREE.MeshBasicMaterial).color.setHex(color1);
+      }
+
+      // Draw telemetry status and scrolling chevrons on canvases
+      if (this.useGLB && item.topCanvas && item.topTex && item.leftCanvas && item.leftTex) {
+        if (dist < 120) {
+          const rawSpeed = (window as any)._currentSpeed || 0;
+          const speed = rawSpeed * 20; // converted to MPH
+          const lapSystem = (window as any)._trackRegistry?.subsystems?.get("laps");
+          const lap = lapSystem ? (lapSystem as any).currentLap : 1;
+          const maxLaps = lapSystem ? lapSystem.maxLaps : 3;
+          const speedPct = Math.min(speed / 130, 1.0);
+          const roundedSpeed = Math.round(speed);
+          
+          // 1. Draw Top Marquee (only on lap/speed changes)
+          if (item.lastLap !== lap || item.lastSpeed !== roundedSpeed) {
+            const tCtx = item.topCanvas.getContext("2d")!;
+            tCtx.fillStyle = "#030108";
+            tCtx.fillRect(0, 0, 512, 64);
+            tCtx.strokeStyle = item.index % 2 === 0 ? "#ff00bb" : "#00ffff";
+            tCtx.lineWidth = 3;
+            tCtx.strokeRect(3, 3, 512 - 6, 64 - 6);
+            tCtx.fillStyle = "#ffffff";
+            tCtx.font = "bold 28px 'Courier New', monospace";
+            tCtx.textAlign = "center";
+            tCtx.textBaseline = "middle";
+            tCtx.shadowColor = item.index % 2 === 0 ? "#ff00bb" : "#00ffff";
+            tCtx.shadowBlur = 8;
+            tCtx.fillText(`LAP ${lap}/${maxLaps}  |  SPEED: ${roundedSpeed} MPH`, 256, 32);
+            item.topTex.needsUpdate = true;
+            
+            item.lastLap = lap;
+            item.lastSpeed = roundedSpeed;
+          }
+
+          // 2. Draw Side Speed Bars & Scrolling Chevrons (throttled at ~30 FPS, and only close)
+          if (dist < 100 && elapsed - (item.lastDrawTime || 0) >= 0.033) {
+            const lCtx = item.leftCanvas.getContext("2d")!;
+            const rCtx = item.rightCanvas.getContext("2d")!;
+            [lCtx, rCtx].forEach((ctx) => {
+              ctx.fillStyle = "#030108";
+              ctx.fillRect(0, 0, 64, 256);
+              
+              const barHeight = 256 * speedPct;
+              const grad = ctx.createLinearGradient(0, 256, 0, 0);
+              grad.addColorStop(0, "#00ff88");
+              grad.addColorStop(0.6, "#00ffff");
+              grad.addColorStop(1.0, "#ff00bb");
+              ctx.fillStyle = grad;
+              ctx.fillRect(4, 256 - barHeight, 8, barHeight);
+              
+              ctx.fillStyle = item.index % 2 === 0 ? "#ff00bb" : "#00ffff";
+              ctx.font = "bold 24px Arial";
+              ctx.textAlign = "center";
+              
+              const chevronOffset = (elapsed * (10 + speed * 1.5)) % 40;
+              for (let y = -40; y < 300; y += 40) {
+                const drawY = y + chevronOffset;
+                const opacity = drawY < 40 ? drawY / 40 : (drawY > 216 ? (256 - drawY) / 40 : 1.0);
+                ctx.globalAlpha = Math.max(0, Math.min(opacity, 1.0));
+                ctx.fillText("▲", 38, 256 - drawY);
+              }
+              ctx.globalAlpha = 1.0;
+              
+              ctx.strokeStyle = item.index % 2 === 0 ? "#ff00bb" : "#00ffff";
+              ctx.lineWidth = 2;
+              ctx.strokeRect(2, 2, 64 - 4, 256 - 4);
+            });
+            item.leftTex.needsUpdate = true;
+            if (item.rightTex) item.rightTex.needsUpdate = true;
+            
+            item.lastDrawTime = elapsed;
+          }
+        }
+      }
+
       if (this.gateLoaded && dist < lodThreshold && this.gateInstMeshes.length > 0) {
         // High LOD: Align GLB gate centered perfectly over the gate position
-        const span = this.halfWidth * 2.2;
-        dummy.position.set(0, 0, 0); // Grounded bottom-center
+        const scaleVal = (this.halfWidth * 2.5) / this.gateWidth;
+        dummy.position.set(-this.gateOffsetX * scaleVal, -this.gateMinY * scaleVal, -this.gateOffsetZ * scaleVal); // Grounded and centered using loaded bounds
         dummy.rotation.set(0, 0, 0);
         
         // Scale proportionally to span the track beautiful width
-        dummy.scale.set(span * 0.43, span * 0.43, span * 0.43);
+        dummy.scale.set(scaleVal, scaleVal, scaleVal);
         dummy.updateMatrix();
 
         // Premultiply by parent gateGroup worldmatrix to transform to worldspace coordinate perfectly
@@ -1101,17 +1289,80 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
 
         // Hide procedural fallback since GLB is loaded and within range
         item.proceduralArch.visible = false;
-        // Float the text panel slightly higher for the loaded gate
-        item.signMesh.position.y = 17.5;
+        // Float the text panel proportionally with the scale factor
+        item.signMesh.position.set(
+          -this.gateOffsetX * scaleVal,
+          (0.05 - this.gateMinY) * scaleVal,
+          (0.152 - this.gateOffsetZ) * scaleVal
+        );
+        item.signMesh.scale.set(
+          0.80 * scaleVal / 16.0,
+          0.20 * scaleVal / 4.0,
+          1.0
+        );
+
+        // Make extra gate screens/strobes visible and position/scale them dynamically
+        const topScreen = item.topScreenMesh;
+        const leftSide = item.leftSideMesh;
+        const rightSide = item.rightSideMesh;
+        if (topScreen) {
+          topScreen.visible = true;
+          topScreen.position.set(
+            -this.gateOffsetX * scaleVal,
+            (0.30 - this.gateMinY) * scaleVal,
+            (0.152 - this.gateOffsetZ) * scaleVal
+          );
+          topScreen.scale.set(0.80 * scaleVal / 16.0, 0.10 * scaleVal / 2.0, 1.0);
+        }
+        if (leftSide) {
+          leftSide.visible = true;
+          leftSide.position.set(
+            (-0.80 - this.gateOffsetX) * scaleVal,
+            (-0.10 - this.gateMinY) * scaleVal,
+            (0.152 - this.gateOffsetZ) * scaleVal
+          );
+          leftSide.scale.set(0.08 * scaleVal / 1.6, 0.40 * scaleVal / 9.0, 1.0);
+        }
+        if (rightSide) {
+          rightSide.visible = true;
+          rightSide.position.set(
+            (0.80 - this.gateOffsetX) * scaleVal,
+            (-0.10 - this.gateMinY) * scaleVal,
+            (0.152 - this.gateOffsetZ) * scaleVal
+          );
+          rightSide.scale.set(0.08 * scaleVal / 1.6, 0.40 * scaleVal / 9.0, 1.0);
+        }
+        if (item.strobes) {
+          item.strobes[0].position.set((-0.88 - this.gateOffsetX) * scaleVal, (0.35 - this.gateMinY) * scaleVal, (0.152 - this.gateOffsetZ) * scaleVal);
+          item.strobes[1].position.set((-0.72 - this.gateOffsetX) * scaleVal, (0.35 - this.gateMinY) * scaleVal, (0.152 - this.gateOffsetZ) * scaleVal);
+          item.strobes[2].position.set((0.72 - this.gateOffsetX) * scaleVal, (0.35 - this.gateMinY) * scaleVal, (0.152 - this.gateOffsetZ) * scaleVal);
+          item.strobes[3].position.set((0.88 - this.gateOffsetX) * scaleVal, (0.35 - this.gateMinY) * scaleVal, (0.152 - this.gateOffsetZ) * scaleVal);
+          for (const s of item.strobes) {
+            s.visible = true;
+            s.scale.setScalar(0.018 * scaleVal / 0.35);
+          }
+        }
       } else {
-        // Low LOD or fallback: hide GLB mesh and show procedural neon arch instead
+        // Low LOD or fallback: hide GLB mesh and show procedural gantry instead
         if (this.gateLoaded) {
           for (let m = 0; m < this.gateInstMeshes.length; m++) {
             this.gateInstMeshes[m].setMatrixAt(i, this.invisibleMatrix);
           }
         }
         item.proceduralArch.visible = true;
-        item.signMesh.position.y = 15.0;
+        item.signMesh.position.set(0, 15.0, 0.4);
+        item.signMesh.scale.set(1.0, 1.0, 1.0);
+
+        // Hide extra screens/strobes when GLB is not rendered
+        const topScreen = item.topScreenMesh;
+        const leftSide = item.leftSideMesh;
+        const rightSide = item.rightSideMesh;
+        if (topScreen) topScreen.visible = false;
+        if (leftSide) leftSide.visible = false;
+        if (rightSide) rightSide.visible = false;
+        if (item.strobes) {
+          for (const s of item.strobes) s.visible = false;
+        }
       }
     }
 
@@ -1380,7 +1631,7 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
   private rightLODState: number[] = [];
 
   private gltfLoader = new GLTFLoader();
-  private invisibleMatrix = new THREE.Matrix4().makeTranslation(0, -9999, 0);
+  private invisibleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
   private updateFrameCounter = 0;
 
   constructor(
@@ -1531,9 +1782,9 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
               matClone,
               segments + 1
             );
-            instMesh.castShadow = true;
+            instMesh.castShadow = false;
             instMesh.receiveShadow = true;
-            instMesh.frustumCulled = false;
+            instMesh.frustumCulled = true;
             parent.add(instMesh);
             return instMesh;
           });
@@ -1579,9 +1830,9 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
               matClone,
               segments + 1
             );
-            instMesh.castShadow = true;
+            instMesh.castShadow = false;
             instMesh.receiveShadow = true;
-            instMesh.frustumCulled = false;
+            instMesh.frustumCulled = true;
             parent.add(instMesh);
             return instMesh;
           });
@@ -1700,6 +1951,9 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
 
     if (leftNeedsUpdate) {
       this.leftPlaceholderMeshes.instanceMatrix.needsUpdate = true;
+      if (this.leftPlaceholderMeshes.computeBoundingSphere) {
+        this.leftPlaceholderMeshes.computeBoundingSphere();
+      }
       if (hasLeftMesh) {
         for (const instMesh of this.leftGLBInstMeshes) {
           instMesh.instanceMatrix.needsUpdate = true;
@@ -1712,6 +1966,9 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
 
     if (rightNeedsUpdate) {
       this.rightPlaceholderMeshes.instanceMatrix.needsUpdate = true;
+      if (this.rightPlaceholderMeshes.computeBoundingSphere) {
+        this.rightPlaceholderMeshes.computeBoundingSphere();
+      }
       if (hasRightMesh) {
         for (const instMesh of this.rightGLBInstMeshes) {
           instMesh.instanceMatrix.needsUpdate = true;

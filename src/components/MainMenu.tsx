@@ -1,6 +1,6 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Orbit, Gamepad2, Zap, Cloud, MapPin, Route, Volume2, VolumeX, Sparkles } from "lucide-react";
+import { Orbit, Gamepad2, Zap, Cloud, MapPin, Route, Music, Volume2, VolumeX, Sparkles, Wrench } from "lucide-react";
 
 interface MainMenuProps {
   appMode: string;
@@ -244,9 +244,33 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 (window as any)._modeSwitch = "track";
               }}
             >
-              <Sparkles className="w-10 h-10 text-[#00ffcc]" />
+              <Zap className="w-10 h-10 text-[#00ffcc]" />
               <div className="text-xs font-bold text-white tracking-widest uppercase">
                 Abyss Trench
+              </div>
+            </button>
+            <button
+              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ffcc00] transition-all hover:scale-105 active:scale-95"
+              onClick={() => {
+                setAppMode("track_mario");
+                (window as any)._appMode = "track_mario";
+                (window as any)._modeSwitch = "track";
+              }}
+            >
+              <Sparkles className="w-10 h-10 text-[#ffcc00]" />
+              <div className="text-xs font-bold text-white tracking-widest uppercase">
+                Mario Circuit
+              </div>
+            </button>
+            <button
+              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95"
+              onClick={() => {
+                setAppMode("track_builder");
+              }}
+            >
+              <Wrench className="w-10 h-10 text-[#00ffcc]" />
+              <div className="text-xs font-bold text-white tracking-widest uppercase">
+                Course Builder
               </div>
             </button>
           </div>

@@ -11,17 +11,19 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { fbm } from "./utils";
 import { GameAvatar } from "./GameAvatar";
 import { RetroMusicSynth } from "./RetroMusicSynth";
 import { createWarpStar } from "./WarpStarMesh";
 import { SpeedLines } from "./SpeedLines";
 import { GameFlowManager, GameMode, SystemFlag } from "./GameFlowManager";
-import { Orbit, Gamepad2, Zap, Cloud, MapPin, Route, Music, Volume2, VolumeX, Sparkles } from "lucide-react";
+import { Orbit, Gamepad2, Zap, Cloud, MapPin, Route } from "lucide-react";
 import { HangarGallery } from "./components/HangarGallery";
 import { MainMenu } from "./components/MainMenu";
 import { FlightHUD } from "./components/FlightHUD";
 import { GlobeHUD } from "./components/GlobeHUD";
+import { CourseBuilder } from "./components/CourseBuilder";
 import { ParticleSystem } from "./utils/ParticleSystem";
 import { PlanetGenerator } from "./utils/PlanetGenerator";
 import { CelestialSystem } from "./utils/CelestialSystem";
@@ -40,6 +42,7 @@ import {
   buildPlannerTrack,
   buildCustomTrack,
   buildAbyssTrenchTrack,
+  buildMarioTrack,
   TrackBuildResult,
 } from "./CourseManager";
 
@@ -55,6 +58,7 @@ export default function App() {
   const bestTimeTextRef = useRef<HTMLDivElement>(null);
   const playerDotRef = useRef<SVGCircleElement>(null);
   const globeSkyboxRef = useRef<THREE.Texture | null>(null);
+  const globeEnvMapRef = useRef<THREE.Texture | null>(null);
 
   // MANDATORY INTEGRITY WARNING:
   // DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A Forensic Auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
@@ -71,10 +75,54 @@ export default function App() {
   const [showDiscoverBanner, setShowDiscoverBanner] = useState<boolean>(false);
   const [curGlimmerShards, setCurGlimmerShards] = useState<number>(0);
 
+  // Time-Attack Ring Choral Challenge State
+  const [timeAttackActive, setTimeAttackActive] = useState<boolean>(false);
+  const [timeAttackTimeLeft, setTimeAttackTimeLeft] = useState<number>(0);
+  const [timeAttackGatesCleared, setTimeAttackGatesCleared] = useState<number>(0);
+  const [timeAttackTotalGates, setTimeAttackTotalGates] = useState<number>(8);
+  const [timeAttackMultiplier, setTimeAttackMultiplier] = useState<number>(1.0);
+  const [timeAttackStatusText, setTimeAttackStatusText] = useState<string>("READY");
+
+  // Expose Time Attack setters and initial values to window for closure-safe access
+  useEffect(() => {
+    (window as any)._timeAttackActive = false;
+    (window as any)._timeAttackTimeLeft = 0;
+    (window as any)._timeAttackGatesCleared = 0;
+    (window as any)._timeAttackTotalGates = 8;
+    (window as any)._timeAttackMultiplier = 1.0;
+    (window as any)._timeAttackStatusText = "READY";
+
+    (window as any)._setTimeAttackActive = (val: boolean) => {
+      (window as any)._timeAttackActive = val;
+      setTimeAttackActive(val);
+    };
+    (window as any)._setTimeAttackTimeLeft = (val: number) => {
+      (window as any)._timeAttackTimeLeft = val;
+      setTimeAttackTimeLeft(val);
+    };
+    (window as any)._setTimeAttackGatesCleared = (val: number) => {
+      (window as any)._timeAttackGatesCleared = val;
+      setTimeAttackGatesCleared(val);
+    };
+    (window as any)._setTimeAttackTotalGates = (val: number) => {
+      (window as any)._timeAttackTotalGates = val;
+      setTimeAttackTotalGates(val);
+    };
+    (window as any)._setTimeAttackMultiplier = (val: number) => {
+      (window as any)._timeAttackMultiplier = val;
+      setTimeAttackMultiplier(val);
+    };
+    (window as any)._setTimeAttackStatusText = (val: string) => {
+      (window as any)._timeAttackStatusText = val;
+      setTimeAttackStatusText(val);
+    };
+  }, []);
+
   const [isMoving, setIsMoving] = useState(false);
   const [isJumping, setIsJumping] = useState(false);
   const [appMode, setAppMode] = useState<
     | "globe"
+    | "globe_view"
     | "menu"
     | "track_oval"
     | "track_retro"
@@ -83,6 +131,8 @@ export default function App() {
     | "track_planner"
     | "track_custom"
     | "track_abyss"
+    | "track_mario"
+    | "track_builder"
   >("globe");
   const [countdownText, setCountdownText] = useState<string | null>(null);
   const [showVictoryCard, setShowVictoryCard] = useState(false);
@@ -173,7 +223,7 @@ export default function App() {
   const globeAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const ensureAudioInitialized = () => {
-    if (!audioContextRef.current) {
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioContextClass();
@@ -194,10 +244,16 @@ export default function App() {
         (window as any)._audioDataArray = dataArray;
 
         // Create the amazing chiptune synth player
+        if (synthRef.current) {
+          try { synthRef.current.stop(); } catch (e) {}
+        }
         const synth = new RetroMusicSynth(ctx, analyser);
         synthRef.current = synth;
 
         // Create HTMLAudioElement for Globe music and connect to AudioContext graph
+        if (globeAudioRef.current) {
+          try { globeAudioRef.current.pause(); } catch (e) {}
+        }
         const audio = new Audio("/music/Glitter Blast.mp3");
         audio.loop = true;
         audio.crossOrigin = "anonymous";
@@ -255,14 +311,9 @@ export default function App() {
 
   const playCountdownSound = (isGo: boolean) => {
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      
-      let ctx = audioContextRef.current;
-      if (!ctx) {
-        ctx = new AudioContextClass();
-        audioContextRef.current = ctx;
-      }
+      ensureAudioInitialized();
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
       if (ctx.state === "suspended") {
         ctx.resume();
       }
@@ -300,13 +351,9 @@ export default function App() {
 
   const playVictoryChime = () => {
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      let ctx = audioContextRef.current;
-      if (!ctx) {
-        ctx = new AudioContextClass();
-        audioContextRef.current = ctx;
-      }
+      ensureAudioInitialized();
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
       if (ctx.state === "suspended") {
         ctx.resume();
       }
@@ -336,13 +383,9 @@ export default function App() {
 
   const playSound = (type: "whoosh" | "screech" | "chime" | "coin") => {
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      let ctx = audioContextRef.current;
-      if (!ctx) {
-        ctx = new AudioContextClass();
-        audioContextRef.current = ctx;
-      }
+      ensureAudioInitialized();
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
       if (ctx.state === "suspended") {
         ctx.resume();
       }
@@ -540,7 +583,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (appMode === "track_oval" || appMode === "globe") {
+    if (appMode.startsWith("track") || appMode === "globe") {
       playMusic(appMode);
     } else {
       pauseMusic();
@@ -604,30 +647,6 @@ export default function App() {
     scene.background = new THREE.Color(0x0a0516); // Deep space dark purple
     scene.fog = new THREE.FogExp2(0x0a0516, 0.001);
 
-    // Load globe space background (Nebula 02)
-    const textureLoader = new THREE.TextureLoader();
-    textureLoader.load(
-      "assets/Planetguard Nebulas/Nebula 02/Render.png",
-      (texture) => {
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        if ("colorSpace" in texture) {
-          (texture as any).colorSpace = (THREE as any).SRGBColorSpace || "srgb";
-        } else if ("encoding" in texture) {
-          (texture as any).encoding = 3001;
-        }
-        globeSkyboxRef.current = texture;
-        const currentMode = (window as any)._appMode || "globe";
-        if (currentMode === "globe" || currentMode === "globe_view") {
-          scene.background = texture;
-        }
-      },
-      undefined,
-      (err) => {
-        console.error("Nebula background failed to load, falling back to dark purple", err);
-      }
-    );
-
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     camera.position.set(0, 3.5, 8);
 
@@ -640,19 +659,63 @@ export default function App() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 0.5; // Further lowered — the 4K puresky HDR sun is extremely bright; this keeps the overall scene from washing out while still allowing nice IBL reflections
 
     // Post-processing setup
     const renderScene = new RenderPass(scene, camera);
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), // Run bloom pass at half size to keep rendering ultra-smooth
-      0.35, // strength
-      1.5, // radius
-      0.85, // threshold
+      0.12, // strength - even gentler for the bright HDR sky; rings and emissives will still bloom nicely without the sun/terrain causing heavy halos
+      1.3, // radius
+      0.94, // threshold - higher so the sky and most terrain stay out of the bloom pass; only the strongest neons, rings, particles, and sun disk trigger it
     );
     const composer = new EffectComposer(renderer);
     composer.addPass(renderScene);
     composer.addPass(bloomPass);
+
+    // Expose for mode-aware adjustments (exposure/bloom need to differ between globe HDR and track neons)
+    (window as any)._renderer = renderer;
+    (window as any)._bloomPass = bloomPass;
+
+    // Load the high-quality 4K HDR skybox (qwantani_moonrise_puresky) for globe mode only.
+    // Applied as both scene.background (rich visual sky) and scene.environment (realistic IBL reflections + ambient on ship, water, props, rings, etc.).
+    // The procedural CelestialSystem (sun/moon/stars/skyDome + day/night cycle) will overlay on top for the stylized game feel.
+    // Load is eager (right after renderer is ready) but async; falls back gracefully to solid color if it fails.
+    const rgbeLoader = new RGBELoader();
+    rgbeLoader.load(
+      "/skybox/qwantani_moonrise_puresky_4k.hdr",
+      (texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+
+        globeSkyboxRef.current = texture;
+
+        // Generate PMREM env map for proper image-based lighting (reflections, diffuse ambient)
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        pmremGenerator.compileEquirectangularShader();
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        globeEnvMapRef.current = envMap;
+        pmremGenerator.dispose();
+
+        // Apply immediately if we are currently in globe mode
+        const currentMode = (window as any)._appMode || "globe";
+        if (currentMode === "globe" || currentMode === "globe_view") {
+          scene.background = texture;
+          scene.environment = envMap;
+          scene.backgroundIntensity = 0.45; // Key fix for heavy glow: tones down the brightness of the HDR sky texture itself (sun and sky less blinding) while environment map still gives nice IBL lighting + reflections on the ship/props/rings
+          scene.environmentIntensity = 0.85; // Slightly gentle IBL so the sun in the puresky doesn't over-light everything on top of the already-dimmed hemi/dir lights
+
+          // Dim the procedural lights right away (HDR env + bright sky now dominate)
+          const hemi = (window as any)._hemiLight as THREE.HemisphereLight | undefined;
+          const dir = (window as any)._dirLight as THREE.DirectionalLight | undefined;
+          if (hemi) hemi.intensity = 0.35;
+          if (dir) dir.intensity = 0.65;
+        }
+      },
+      undefined,
+      (err) => {
+        console.error("HDR skybox failed to load, falling back to dark purple", err);
+      }
+    );
 
     // Controls for mouse dragging
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -662,6 +725,341 @@ export default function App() {
     controls.minDistance = 3;
     controls.maxDistance = 15;
     controls.maxPolarAngle = Math.PI / 2 + 0.1; // Prevent going too far below ground
+
+    // === Globe mode manual camera orbit (rotate) + zoom ===
+    // Stored on window to match the project's camera state style (_smoothedLookAt etc.)
+    // Offsets are relative to the automatic chase; they decay back to 0 when idle.
+    (window as any)._globeCamAzimuthOffset = 0;
+    (window as any)._globeCamPolarOffset = 0;
+    (window as any)._globeCamDistance = 8.5;
+
+    let isDraggingGlobeCam = false;
+    let lastGlobeCamX = 0;
+    let lastGlobeCamY = 0;
+
+    const canvasEl = renderer.domElement;
+
+    const handleGlobeCamDown = (ev: PointerEvent) => {
+      const mode = (window as any)._mode;
+      const inGlobe = mode === "globe" || !mode;
+      if (!inGlobe) return;
+      isDraggingGlobeCam = true;
+      lastGlobeCamX = ev.clientX;
+      lastGlobeCamY = ev.clientY;
+      canvasEl.setPointerCapture(ev.pointerId);
+    };
+
+    const handleGlobeCamMove = (ev: PointerEvent) => {
+      if (!isDraggingGlobeCam) return;
+      const dx = ev.clientX - lastGlobeCamX;
+      const dy = ev.clientY - lastGlobeCamY;
+
+      const azSens = 0.0038;
+      const polSens = 0.0038;
+
+      (window as any)._globeCamAzimuthOffset =
+        ((window as any)._globeCamAzimuthOffset || 0) + dx * azSens;
+
+      let newPol = ((window as any)._globeCamPolarOffset || 0) + dy * polSens;
+      // Reasonable clamps so camera doesn't go underground or straight overhead
+      newPol = Math.max(-0.85, Math.min(0.75, newPol));
+      (window as any)._globeCamPolarOffset = newPol;
+
+      lastGlobeCamX = ev.clientX;
+      lastGlobeCamY = ev.clientY;
+    };
+
+    const handleGlobeCamUp = (ev: PointerEvent) => {
+      isDraggingGlobeCam = false;
+      try {
+        canvasEl.releasePointerCapture(ev.pointerId);
+      } catch {}
+    };
+
+    const handleGlobeCamWheel = (ev: WheelEvent) => {
+      const mode = (window as any)._mode;
+      const inGlobe = mode === "globe" || !mode;
+      if (!inGlobe) return;
+      ev.preventDefault();
+      const cur = (window as any)._globeCamDistance || 8.5;
+      const factor = ev.deltaY > 0 ? 1.09 : 0.915;
+      (window as any)._globeCamDistance = Math.max(2.8, Math.min(38, cur * factor));
+    };
+
+    canvasEl.addEventListener("pointerdown", handleGlobeCamDown);
+    canvasEl.addEventListener("pointermove", handleGlobeCamMove);
+    canvasEl.addEventListener("pointerup", handleGlobeCamUp);
+    canvasEl.addEventListener("pointerleave", handleGlobeCamUp);
+    canvasEl.addEventListener("wheel", handleGlobeCamWheel, { passive: false });
+
+    // Region picking (click on planet surface in space view selects the region for hex details)
+    canvasEl.addEventListener("click", (ev: MouseEvent) => {
+      const mode = (window as any)._mode;
+      if (mode !== "globe_view") return;
+
+      // Simple movement guard: if pointer moved a lot since last down we assume orbit drag, not pick
+      const dx = ev.clientX - (lastPickX || ev.clientX);
+      const dy = ev.clientY - (lastPickY || ev.clientY);
+      if (Math.abs(dx) + Math.abs(dy) > 12) return; // was dragging
+
+      const rect = canvasEl.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -((ev.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(ground.children, true);
+      for (const hit of hits) {
+        let cur: any = hit.object;
+        while (cur) {
+          const rid = cur.userData && cur.userData.regionId;
+          if (rid) {
+            const curr = (window as any)._selectedRegionId;
+            (window as any)._selectedRegionId = (curr === rid ? null : rid);
+            updateDevRegionMarkings();
+            return;
+          }
+          cur = cur.parent;
+          if (cur === ground) break;
+        }
+      }
+      // Background click = deselect
+      (window as any)._selectedRegionId = null;
+      updateDevRegionMarkings();
+    });
+
+    // Record last pointer pos on down so click handler can ignore drags
+    const origDown = handleGlobeCamDown;
+    // (we wrap lightly via another listener to capture pick coords without breaking old logic)
+    canvasEl.addEventListener("pointerdown", (ev: PointerEvent) => {
+      lastPickX = ev.clientX;
+      lastPickY = ev.clientY;
+    }, true);
+
+    // === Dev-only region & hex marking system for space overview (planet view) ===
+    // Visible ONLY in globe_view / isPlanetView. Used for intentional asset placement planning.
+    // Per your spec: region boundaries always shown in space view; click a region to reveal its internal hex separation + numbers.
+    // Purely visual (no data assignment UI yet). Numbers restart per region.
+    const raycaster = new THREE.Raycaster();
+    let devRegionGroup: THREE.Group | null = null;
+    let regionVisualsReady = false;
+    const regionObjects: Map<string, { boundary: THREE.LineSegments; internal: THREE.LineSegments; numbers: THREE.Sprite[] }> = new Map();
+    let lastPickX = 0;
+    let lastPickY = 0;
+
+    function createNumberTexture(num: number): THREE.Texture {
+      const size = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d", { alpha: true })!;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillRect(0, 0, size, size);
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(2, 2, size - 4, size - 4);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 42px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(num), size / 2, size / 2 + 1);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    function createDevRegionMarkings() {
+      if (devRegionGroup || regionVisualsReady) return;
+      const tileGroups: any[] = (window as any)._tileGroups || [];
+      const regions: any[] = (window as any)._planetRegions || [];
+      if (tileGroups.length === 0 || regions.length === 0) return;
+
+      devRegionGroup = new THREE.Group();
+      devRegionGroup.name = "DevRegionMarkings";
+      // Parent to ground so markings rotate with the planet (cozy roll still applies visually in overview)
+      ground.add(devRegionGroup);
+
+      const biomeColor: { [k: string]: number } = {
+        mountain: 0x7ec8ff,
+        sand: 0xffb366,
+        hill: 0x6fcf97,
+        grass: 0x7be38f,
+        water: 0x4a90d9,
+      };
+
+      // Create clean glowing perimeter lines *around* each logical region/country.
+      // The lines follow the actual outer edges of the border hexes (using the stored boundary vertices).
+      // Only visible in space view. A logical country mixes many hex types (biomes are just terrain flavor inside).
+      // Glowing via 3 offset layers.
+      // When you click a country, its internal hexes get their own edge lines + numbers for separation/planning.
+      const countryPalette = [
+        0x4a90e2, // blue
+        0xe67e22, // orange
+        0x27ae60, // green
+        0x9b59b6, // purple
+        0xe74c3c, // red
+        0x16a085, // teal
+      ];
+
+      regions.forEach((region: any) => {
+        const myTiles = region.tiles || [];
+        if (myTiles.length === 0) return;
+
+        const mainColor = countryPalette[parseInt(region.id.split('_')[1]) % countryPalette.length] || 0x00ffcc;
+
+        // Collect external border edges by walking actual hex boundary vertices.
+        // An edge is external if the neighboring hex (by direction) belongs to a different logical country.
+        const borderPts: THREE.Vector3[] = [];
+        const r = (window as any)._planetRadius || 140;
+
+        myTiles.forEach((t: any) => {
+          const tg = t.group || tileGroups[t.idx];
+          if (!tg) return;
+          const verts = tg.userData.vertices || t.vertices || [];
+          if (!verts.length) return;
+
+          const myLog = tg.userData.logicalRegion || tg.userData.regionId;
+          const disp = tg.userData.displacement || 0;
+
+          for (let k = 0; k < verts.length; k++) {
+            const v1 = verts[k];
+            const v2 = verts[(k + 1) % verts.length];
+
+            // Direction of this edge's "outside"
+            const midDir = v1.clone().add(v2).normalize();
+
+            // Find the closest tile (by angular dot) that could be across this edge
+            let bestDot = -1;
+            let neighborLog = null;
+            tileGroups.forEach((otg: any) => {
+              if (otg === tg) return;
+              const oc = (otg.userData.center as THREE.Vector3) || otg.position.clone().normalize();
+              const d = midDir.dot(oc);
+              if (d > bestDot) {
+                bestDot = d;
+                neighborLog = otg.userData.logicalRegion || otg.userData.regionId;
+              }
+            });
+
+            if (neighborLog !== myLog) {
+              // This edge is on the region border → use the actual hex edge points, raised
+              const p1 = v1.clone().multiplyScalar(r + disp + 2.8);
+              const p2 = v2.clone().multiplyScalar(r + disp + 2.8);
+              borderPts.push(p1, p2);
+            }
+          }
+        });
+
+        // Glowing perimeter using the collected border edges (follows hex outlines)
+        const layers = [
+          { extra: 0,   color: mainColor, opacity: 0.95 },
+          { extra: -0.8, color: mainColor, opacity: 0.35 },
+          { extra: +1.0, color: 0xffffff, opacity: 0.28 },
+        ];
+
+        const perimeterLayers: THREE.LineSegments[] = [];
+        layers.forEach(layer => {
+          if (borderPts.length === 0) return;
+          const pts = borderPts.map(p => {
+            const n = p.clone().normalize();
+            return p.clone().add(n.multiplyScalar(layer.extra));
+          });
+          const geo = new THREE.BufferGeometry().setFromPoints(pts);
+          const mat = new THREE.LineBasicMaterial({
+            color: layer.color,
+            transparent: true,
+            opacity: layer.opacity,
+          });
+          const segs = new THREE.LineSegments(geo, mat);
+          devRegionGroup.add(segs);
+          perimeterLayers.push(segs);
+        });
+
+        // Per-hex details for this logical country: exact hex borders + number.
+        // Created hidden; only shown when this country is clicked in space view.
+        // This lets you see the individual hexes (which may have different biomes) inside the country.
+        const hexDetails: { number: THREE.Sprite; hexBorder: THREE.Line }[] = [];
+
+        myTiles.forEach((t: any, localIdx: number) => {
+          const tg = t.group || tileGroups[t.idx];
+          if (!tg) return;
+
+          const disp = tg.userData.displacement || 0;
+          const verts = tg.userData.vertices || t.vertices || [];
+
+          // Number (1-based per country)
+          const numTex = createNumberTexture(localIdx + 1);
+          const smat = new THREE.SpriteMaterial({ map: numTex, transparent: true });
+          const spr = new THREE.Sprite(smat);
+          const n = tg.position.clone().normalize();
+          spr.position.copy(tg.position).add(n.multiplyScalar(5.2));
+          spr.scale.set(5.0, 5.0, 1);
+          spr.visible = false;
+          devRegionGroup.add(spr);
+
+          // Exact border for this hex (using its vertices) - shown only for selected country
+          let hexBorder: THREE.Line | null = null;
+          if (verts.length > 0) {
+            const hexPts: THREE.Vector3[] = [];
+            verts.forEach((v: THREE.Vector3) => {
+              hexPts.push(v.clone().multiplyScalar(r + disp + 1.6));
+            });
+            if (hexPts.length) hexPts.push(hexPts[0].clone());
+            const hgeo = new THREE.BufferGeometry().setFromPoints(hexPts);
+            const hmat = new THREE.LineBasicMaterial({
+              color: 0x66ddff,
+              transparent: true,
+              opacity: 0.55,
+            });
+            hexBorder = new THREE.Line(hgeo, hmat);
+            hexBorder.visible = false;
+            devRegionGroup.add(hexBorder);
+          }
+
+          hexDetails.push({ number: spr, hexBorder: hexBorder! });
+        });
+
+        regionObjects.set(region.id, {
+          perimeterLayers,
+          hexDetails,
+        } as any);
+      });
+
+      regionVisualsReady = true;
+      (window as any)._devRegionGroup = devRegionGroup;
+    }
+
+    function updateDevRegionMarkings() {
+      if (!regionVisualsReady || !devRegionGroup) return;
+      const isView = (window as any)._mode === "globe_view";
+      devRegionGroup.visible = isView;
+
+      if (!isView) return;
+
+      const selected = (window as any)._selectedRegionId as string | null;
+
+      regionObjects.forEach((vis: any, rid: string) => {
+        // Region borders (the glowing perimeter "around" the region) are always visible in space view
+        if (vis.perimeterLayers) {
+          vis.perimeterLayers.forEach((l: THREE.Line) => { l.visible = isView; });
+        } else if (vis.boundary) {
+          vis.boundary.visible = isView;
+        }
+
+        // Per-hex details (small separation rings + numbers) only for the currently clicked/selected region
+        if (vis.hexDetails) {
+          vis.hexDetails.forEach((d: any) => {
+            if (d.number) d.number.visible = isView && selected === rid;
+            if (d.hexBorder) d.hexBorder.visible = isView && selected === rid;
+            if (d.ring) d.ring.visible = isView && selected === rid; // legacy
+          });
+        }
+        // Fallback for any legacy numbers array
+        if (vis.numbers) {
+          vis.numbers.forEach((s: THREE.Sprite) => { s.visible = isView && selected === rid; });
+        }
+      });
+    }
 
     // 2. Lighting Setup
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0xebf2fa, 0.8);
@@ -691,6 +1089,10 @@ export default function App() {
     const tilesData = planetGenerator.tilesData;
     const globePOIs = (window as any)._globePOIs;
     const cloudsGroup = (window as any)._cloudsGroup;
+
+    // Expose for planet view overview camera targeting
+    (window as any)._groundGroup = ground;
+    (window as any)._planetRadius = planetRadius;
 
     // --- Track Mode Environment ---
     const trackGroup = new THREE.Group();
@@ -723,15 +1125,168 @@ export default function App() {
       flatShading: true,
     });
 
-    const waterSprayMat = new THREE.MeshPhongMaterial({
-      color: 0xe0f7fa,       // Light cyan seafoam
-      emissive: 0x11333a,    // Soft cyan glow
-      emissiveIntensity: 0.5,
+    // Load smoke-particles kit textures for richer air exhaust, boost smoke, and landing dust
+    // (black/white puffs, explosions for variety in air cruising/climbing)
+    const smokeTexLoader = new THREE.TextureLoader();
+    const whitePuffTex = smokeTexLoader.load('/kenney/kenney_smoke-particles/PNG/White puff/whitePuff00.png');
+    const blackSmokeTex = smokeTexLoader.load('/kenney/kenney_smoke-particles/PNG/Black smoke/blackSmoke00.png');
+    const explosionTex = smokeTexLoader.load('/kenney/kenney_smoke-particles/PNG/Explosion/explosion00.png');
+
+    // Load new premium particle pack textures (stars, flames, sparks, warps, smoke)
+    const starParticleTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/star_05.png');
+    const flameParticleTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/flame_01.png');
+    const sparkParticleTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/spark_02.png');
+    const warpParticleTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/trace_01.png');
+    const smokeParticleTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/smoke_04.png');
+
+    // Plane geo for soft puff look (better than boxes for smoke)
+    const puffGeo = new THREE.PlaneGeometry(0.6, 0.6);
+
+    const airExhaustMat = new THREE.MeshBasicMaterial({
+      map: whitePuffTex,
       transparent: true,
       opacity: 0.65,
-      flatShading: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const boostAirSmokeMat = new THREE.MeshBasicMaterial({
+      map: explosionTex,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const landingDustMat = new THREE.MeshBasicMaterial({
+      map: blackSmokeTex,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+    });
+
+    const starParticleMat = new THREE.MeshBasicMaterial({
+      map: starParticleTex,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const flameParticleMat = new THREE.MeshBasicMaterial({
+      map: flameParticleTex,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const sparkParticleMat = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const warpParticleMat = new THREE.MeshBasicMaterial({
+      map: warpParticleTex,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const trailSmokeMat = new THREE.MeshBasicMaterial({
+      map: smokeParticleTex,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+
+    const waterSprayMat = new THREE.MeshBasicMaterial({
+      map: whitePuffTex,
+      color: 0xe0f7fa,       // Light cyan seafoam
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
     });
     (window as any)._waterSprayMat = waterSprayMat;
+
+    const sandSprayMat = new THREE.MeshBasicMaterial({
+      map: whitePuffTex,
+      color: 0xe5a65d,       // Warm sand orange
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    (window as any)._sandSprayMat = sandSprayMat;
+
+    const grassSprayMat = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
+      color: 0x5cd97b,       // Fresh grass green
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    (window as any)._grassSprayMat = grassSprayMat;
+
+    const snowSprayMat = new THREE.MeshBasicMaterial({
+      map: starParticleTex,
+      color: 0xffffff,       // Snowy white
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    (window as any)._snowSprayMat = snowSprayMat;
+
+    // High-performance dynamic light pool for particle events
+    const dynamicLights: { light: THREE.PointLight; life: number; maxLife: number; startIntensity: number }[] = [];
+    for (let l = 0; l < 2; l++) {
+      const pl = new THREE.PointLight(0xffffff, 0, 10);
+      pl.castShadow = false; // keep shadows off for maximum performance
+      scene.add(pl);
+      dynamicLights.push({ light: pl, life: 0, maxLife: 0, startIntensity: 0 });
+    }
+
+    const triggerDynamicLight = (pos: THREE.Vector3, color: number, intensity: number, duration: number) => {
+      let bestSlot = dynamicLights.find(l => l.life <= 0);
+      if (!bestSlot) {
+        bestSlot = dynamicLights[0];
+        for (let l = 1; l < dynamicLights.length; l++) {
+          if (dynamicLights[l].life < bestSlot.life) {
+            bestSlot = dynamicLights[l];
+          }
+        }
+      }
+      bestSlot.light.position.copy(pos);
+      bestSlot.light.color.setHex(color);
+      bestSlot.light.intensity = intensity;
+      bestSlot.life = duration;
+      bestSlot.maxLife = duration;
+      bestSlot.startIntensity = intensity;
+    };
+    (window as any).triggerDynamicLight = triggerDynamicLight;
+
+    // Cyber Shockwave Ring (Sonic Boom effect)
+    const shockwaveTex = smokeTexLoader.load('/particles/kenney_particle-pack/PNG (Transparent)/circle_05.png');
+    const ringGeo = new THREE.PlaneGeometry(1.5, 1.5);
+    const ringMat = new THREE.MeshBasicMaterial({
+      map: shockwaveTex,
+      color: 0x00f3ff,       // Sleek neon cyan shockwave
+      transparent: true,
+      opacity: 0.0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const vaporCone = new THREE.Mesh(ringGeo, ringMat);
+    let vaporConeLife = 0;
 
     // Magical Particle Trail System (Fully pooled and GC-free for peak performance!)
     const particleSystem = new ParticleSystem(scene, particleGeo, particleMat);
@@ -830,6 +1385,244 @@ export default function App() {
       }
     };
 
+    // === Dynamic Slalom Ring Spawning & Challenge Functions ===
+    // Procedurally spawns the next target ring and a set of trail shards
+    const spawnNextTrialGate = (fromPos: THREE.Vector3, isFirstTarget: boolean) => {
+      const parentGroup = ground; // Mounts to planet so it rotates with world coordinates
+      if (!parentGroup) return;
+
+      // 1. Clean up previous trial elements from the scene
+      if ((window as any)._activeTrialGateMesh) {
+        parentGroup.remove((window as any)._activeTrialGateMesh);
+        (window as any)._activeTrialGateMesh = null;
+      }
+      if ((window as any)._activeTrialShardMeshes) {
+        ((window as any)._activeTrialShardMeshes as THREE.Mesh[]).forEach((m: any) => {
+          parentGroup.remove(m);
+        });
+      }
+      (window as any)._activeTrialShardMeshes = [];
+
+      const pRadius = planetRadius;
+      const pCenter = new THREE.Vector3(0, -(pRadius + 2.5) - 0.25, 0); // Core pivot
+
+      // 2. Determine forward trajectory
+      const currentLocHeading = heading || 0;
+      const forwardVec = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), currentLocHeading);
+
+      // Curved paths generator
+      const latAngle = isFirstTarget ? 0.0 : (Math.random() - 0.5) * 0.9; // left/right slalom deviation
+      const altOffset = isFirstTarget ? 4.0 : (Math.random() - 0.5) * 14.0; // vertical shift
+      const gateDirection = forwardVec.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), latAngle).normalize();
+      const distToGate = isFirstTarget ? 50.0 : 70.0 + Math.random() * 25.0;
+
+      const targetWorldPos = warpStar.position.clone().addScaledVector(gateDirection, distToGate);
+      
+      // Safe altitude calculations
+      const curAlt = warpStar.position.y - pCenter.y;
+      const destAlt = Math.max(pRadius + 14.0, Math.min(pRadius + 36.0, curAlt + altOffset));
+
+      const radialDirection = targetWorldPos.clone().sub(pCenter).normalize();
+      const finalGatePos = pCenter.clone().addScaledVector(radialDirection, destAlt);
+
+      // 3. Create the Neon portal group
+      const trialGateGroup = new THREE.Group();
+      trialGateGroup.position.copy(finalGatePos);
+      trialGateGroup.lookAt(warpStar.position); // Face the incoming player
+
+      // Torus geometry
+      const ringGateGeo = new THREE.TorusGeometry(4.0, 0.45, 12, 32);
+      const ringGateMat = new THREE.MeshPhongMaterial({
+        color: 0x00f3ff,
+        emissive: 0x00f3ff,
+        emissiveIntensity: 3.5,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide
+      });
+      const ringGateMesh = new THREE.Mesh(ringGateGeo, ringGateMat);
+      ringGateMesh.castShadow = true;
+      trialGateGroup.add(ringGateMesh);
+
+      // Orbiting crystals
+      const crystalGeo = new THREE.OctahedronGeometry(0.7, 0);
+      const crystalMat = new THREE.MeshPhongMaterial({
+        color: 0xff33aa,
+        emissive: 0xff33aa,
+        emissiveIntensity: 2.0,
+        flatShading: true
+      });
+      const orbGroup = new THREE.Group();
+      const orbCount = 5;
+      for (let o = 0; o < orbCount; o++) {
+        const mesh = new THREE.Mesh(crystalGeo, crystalMat);
+        const lAngle = (o / orbCount) * Math.PI * 2;
+        mesh.position.set(Math.cos(lAngle) * 5.4, Math.sin(lAngle) * 5.4, 0);
+        orbGroup.add(mesh);
+      }
+      trialGateGroup.add(orbGroup);
+
+      // Register variables to globally track meshes
+      (window as any)._activeTrialGateMesh = trialGateGroup;
+      (window as any)._activeTrialGateOrbital = orbGroup;
+      (window as any)._activeTrialGateWorldPos = finalGatePos.clone();
+
+      trialGateGroup.updateMatrix();
+      trialGateGroup.updateMatrixWorld();
+      parentGroup.attach(trialGateGroup);
+
+      // 4. Spawn golden trail shards along the pathway
+      const trailShardGeo = new THREE.IcosahedronGeometry(0.55, 0);
+      const trailShardMat = new THREE.MeshPhongMaterial({
+        color: 0xffff33,
+        emissive: 0xffaa00,
+        emissiveIntensity: 2.5,
+        flatShading: true
+      });
+
+      const numShards = 5;
+      const shardsList: any[] = [];
+      for (let s = 1; s <= numShards; s++) {
+        const tVal = s / (numShards + 1);
+        const shardWorldPos = warpStar.position.clone().lerp(finalGatePos, tVal);
+        
+        const sAlt = THREE.MathUtils.lerp(curAlt, destAlt, tVal);
+        const sRadial = shardWorldPos.clone().sub(pCenter).normalize();
+        const finalSWorldPos = pCenter.clone().addScaledVector(sRadial, sAlt);
+
+        const shardMesh = new THREE.Mesh(trailShardGeo, trailShardMat);
+        shardMesh.position.copy(finalSWorldPos);
+        shardMesh.lookAt(pCenter);
+        shardMesh.rotateX(Math.PI / 2);
+
+        shardMesh.updateMatrix();
+        shardMesh.updateMatrixWorld();
+        parentGroup.attach(shardMesh);
+
+        shardsList.push({
+          mesh: shardMesh,
+          collected: false,
+          worldPos: finalSWorldPos.clone()
+        });
+        (window as any)._activeTrialShardMeshes.push(shardMesh);
+      }
+
+      (window as any)._activeTrialShards = shardsList;
+    };
+
+    // Triggers the initial run setup
+    const startTimeAttackTrial = (triggerPos: THREE.Vector3) => {
+      if ((window as any)._timeAttackActive) return;
+
+      (window as any)._timeAttackActive = true;
+      (window as any)._timeAttackTimeLeft = 20.0;
+      (window as any)._timeAttackGatesCleared = 0;
+      (window as any)._timeAttackTotalGates = 8;
+      (window as any)._timeAttackMultiplier = 1.0;
+
+      setTimeAttackActive(true);
+      setTimeAttackTimeLeft(20.0);
+      setTimeAttackGatesCleared(0);
+      setTimeAttackTotalGates(8);
+      setTimeAttackMultiplier(1.0);
+      setTimeAttackStatusText("TIME-ATTACK GAME ALIVE!");
+
+      playSound("chime");
+      triggerDynamicLight(triggerPos, 0xffd700, 15.0, 0.7);
+
+      setCurrentDiscoverMessage("🏆 TIME-ATTACK CHORAL INITIATED! 🏆\nFly through consecutive gates before the timer runs out!");
+      setShowDiscoverBanner(true);
+      setTimeout(() => setShowDiscoverBanner(false), 5000);
+
+      spawnNextTrialGate(triggerPos, true);
+    };
+
+    // Fires when player collides with the active destination gate
+    const handleTrialGateCollected = () => {
+      const clearedVal = ((window as any)._timeAttackGatesCleared || 0) + 1;
+      (window as any)._timeAttackGatesCleared = clearedVal;
+      setTimeAttackGatesCleared(clearedVal);
+
+      playSound("chime");
+      const gatePos = (window as any)._activeTrialGateWorldPos || warpStar.position.clone();
+      triggerDynamicLight(gatePos, 0x00ffcc, 12.0, 0.6);
+
+      // Apply speed boost and rewards
+      boostMax = 4.0;
+      boostTime = 1.5;
+      (window as any)._targetBarrelRoll = ((window as any)._targetBarrelRoll || 0) + Math.PI * 2;
+      
+      const currentMult = (window as any)._timeAttackMultiplier || 1.0;
+      const earnedBonus = Math.round(150 * currentMult);
+      setCurGlimmerShards(prev => prev + earnedBonus);
+
+      // Time added
+      const curRemaining = (window as any)._timeAttackTimeLeft || 0;
+      const updatedTimer = Math.min(25.0, curRemaining + 4.0);
+      (window as any)._timeAttackTimeLeft = updatedTimer;
+      setTimeAttackTimeLeft(updatedTimer);
+
+      // Update multiplier
+      const nextMult = currentMult + 0.5;
+      (window as any)._timeAttackMultiplier = nextMult;
+      setTimeAttackMultiplier(nextMult);
+
+      // Spawn visual celebration burst
+      for (let p = 0; p < 45; p++) {
+        const rotAngle = Math.random() * Math.PI * 2;
+        const pitchAngle = (Math.random() - 0.5) * Math.PI;
+        const speed = 6.0 + Math.random() * 12.0;
+        const vel = new THREE.Vector3(
+          Math.cos(rotAngle) * Math.cos(pitchAngle) * speed,
+          Math.sin(pitchAngle) * speed,
+          Math.cos(rotAngle) * Math.sin(pitchAngle) * speed
+        );
+        addSpawningParticle(puffGeo, starParticleMat, gatePos, vel, 0.8, 1.2, 0.6 + Math.random() * 0.9);
+      }
+
+      // Chain progression check
+      const totalTarget = (window as any)._timeAttackTotalGates || 8;
+      if (clearedVal >= totalTarget) {
+        endTimeAttackChoral(true);
+      } else {
+        spawnNextTrialGate(gatePos, false);
+      }
+    };
+
+    // Clears visual components from memory and manages state resolution
+    const endTimeAttackChoral = (isSuccessVal: boolean) => {
+      (window as any)._timeAttackActive = false;
+      setTimeAttackActive(false);
+
+      const parentGroup = ground;
+      if (parentGroup) {
+        if ((window as any)._activeTrialGateMesh) {
+          parentGroup.remove((window as any)._activeTrialGateMesh);
+          (window as any)._activeTrialGateMesh = null;
+        }
+        if ((window as any)._activeTrialShardMeshes) {
+          ((window as any)._activeTrialShardMeshes as THREE.Mesh[]).forEach((m) => {
+            parentGroup.remove(m);
+          });
+        }
+        (window as any)._activeTrialShardMeshes = [];
+      }
+
+      if (isSuccessVal) {
+        playSound("chime");
+        const finalMult = (window as any)._timeAttackMultiplier || 1.0;
+        const prizeShards = Math.round(1000 * finalMult);
+        setCurGlimmerShards(prev => prev + prizeShards);
+        setCurrentDiscoverMessage(`🏆 PERFECT CHORAL CLEAR! 🏆\nAwarded +${prizeShards} Shards!`);
+      } else {
+        playSound("screech");
+        const clearedNum = (window as any)._timeAttackGatesCleared || 0;
+        setCurrentDiscoverMessage(`⏱️ TRIAL TIME OUT!\nYou cleared ${clearedNum}/8 gates.`);
+      }
+      setShowDiscoverBanner(true);
+      setTimeout(() => setShowDiscoverBanner(false), 5500);
+    };
+
     // Create mini-star shape
     const projShape = new THREE.Shape();
     const projOuter = 0.22;
@@ -879,43 +1672,55 @@ export default function App() {
       emissiveIntensity: 4.0,
       flatShading: true,
     });
-    const projectileTrailMat = new THREE.MeshPhongMaterial({
-      color: 0xffffff,
-      emissive: 0xffdd44,
-      emissiveIntensity: 3.0,
-      flatShading: true,
+    const projectileTrailMat = new THREE.MeshBasicMaterial({
+      map: starParticleTex,
+      color: 0xffdd44,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
 
     // Colorful drift spark materials for intense gameplay feedback
-    const sparkMatBlue = new THREE.MeshPhongMaterial({
+    const sparkMatBlue = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
       color: 0x33aaff,
-      emissive: 0x0055ff,
-      emissiveIntensity: 3.0,
-      flatShading: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const sparkMatGold = new THREE.MeshPhongMaterial({
+    const sparkMatGold = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
       color: 0xffaa00,
-      emissive: 0xff5500,
-      emissiveIntensity: 3.0,
-      flatShading: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const sparkMatNeon = new THREE.MeshPhongMaterial({
+    const sparkMatNeon = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
       color: 0xff33bb,
-      emissive: 0xff0055,
-      emissiveIntensity: 4.0,
-      flatShading: true,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const sparkMatUltra = new THREE.MeshPhongMaterial({
+    const sparkMatUltra = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
       color: 0x33ffff,
-      emissive: 0xffffff,
-      emissiveIntensity: 5.0,
-      flatShading: true,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const sparkMatScrape = new THREE.MeshPhongMaterial({
+    const sparkMatScrape = new THREE.MeshBasicMaterial({
+      map: sparkParticleTex,
       color: 0xffdd44,
-      emissive: 0xff5500,
-      emissiveIntensity: 6.0,
-      flatShading: true,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
 
     // 4. Instantiation
@@ -926,10 +1731,15 @@ export default function App() {
     // Orange/Cream cat fur color
     const avatar = new GameAvatar(warpStar, 0xffb75e, true);
 
+    // Expose for dev tools (planet view visibility toggle + overview cam)
+    (window as any)._warpStar = warpStar;
+    (window as any)._avatar = avatar;
+
     // Warp Star lighting fx
     const starLight = new THREE.PointLight(0xfffae6, 1.5, 8.0);
     starLight.position.set(0, 0.5, 0);
     warpStar.add(starLight);
+    warpStar.add(vaporCone); // attach vapor cone shockwave to the ship
 
     // Physics/Animation loop state
     const clock = new THREE.Clock();
@@ -1212,7 +2022,54 @@ export default function App() {
         (window as any)._smoothedLookAt = undefined;
         (window as any)._smoothedSlopeY = undefined;
 
-        if (newMode === "globe") {
+        // Reset manual globe camera orbit/zoom state on any mode change
+        (window as any)._globeCamAzimuthOffset = 0;
+        (window as any)._globeCamPolarOffset = 0;
+        (window as any)._globeCamDistance = 8.5;
+
+        if (newMode === "globe_view") {
+          // Space overview / planet design dev view: hide player/vehicle, full 360 orbit from far space, celestial yes, no ship loc indicator
+          const ws = (window as any)._warpStar || warpStar;
+          const av = (window as any)._avatar || avatar;
+          if (ws) ws.visible = false;
+          if (av && av.mesh) av.mesh.visible = false;
+
+          currentSpeed = 0;
+
+          // Compute globe center (groundGroup is offset, tiles/rings built around sphere)
+          const g = (window as any)._groundGroup || ground;
+          const pR = (window as any)._planetRadius || 140;
+          const centerY = g ? (g.position.y + pR + 2.75) : 0;
+          const globeCenter = new THREE.Vector3(0, centerY, 0);
+          (window as any)._globeCenter = globeCenter;
+
+          // Space overview camera: positioned for a full clear view of the entire planet + islands + rings from "space".
+          // Using a direction vector + distance ~2.4x radius so the whole globe fits nicely with margin.
+          const viewDist = pR * 2.45;
+          const viewDir = new THREE.Vector3(0.12, 0.65, 1.0).normalize();
+          camera.position.copy(globeCenter.clone().add(viewDir.multiplyScalar(viewDist)));
+          camera.lookAt(globeCenter);
+          controls.target.copy(globeCenter);
+
+          // Full 360 orbit controls for dev inspection (no polar clamp, generous zoom range for close-up tiles or far context)
+          controls.minDistance = pR * 1.05;
+          controls.maxDistance = pR * 4.2;
+          controls.minPolarAngle = 0.01;
+          controls.maxPolarAngle = Math.PI - 0.01;
+          controls.enableDamping = true;
+          controls.enabled = true;
+
+          // Force the controls internals to accept our manual far position *immediately* (prevents damping or prior state from yanking it back).
+          // Also lock a nice fixed fov for the overview.
+          const prevDamping = controls.enableDamping;
+          controls.enableDamping = false;
+          controls.update();
+          controls.enableDamping = prevDamping;
+          camera.fov = 48;
+          camera.updateProjectionMatrix();
+
+          // Ensure env/sky stay in globe style (already handled by appMode effect)
+        } else if (newMode === "globe") {
           ringsCollected = 0;
           if (globeRingsCollectedRef.current) {
             globeRingsCollectedRef.current.innerText = "0";
@@ -1221,18 +2078,39 @@ export default function App() {
             ((window as any)._ringGates as any[]).forEach((r: any) => {
               r.collected = false;
               if (r.mesh) {
-                r.mesh.visible = true;
+                r.mesh.visible = !!r.isGoldenTrigger;
               }
             });
           }
         }
 
-        heading = 0;
-        (window as any)._actualTravelDir = undefined;
-        warpStar.position.set(0, 0, 0);
-        camera.position.set(0, 3.5, 8);
-        controls.target.set(0, 1.5, 0);
-        currentSpeed = 0; // Reset player velocity for restart transition!
+        // Only reset ship position/heading/speed/cam for normal globe entry (from menu/tracks), NOT when returning from globe_view dev tool
+        const skipReset = !!(window as any)._skipGlobeReset;
+        (window as any)._skipGlobeReset = false;
+
+        if (!skipReset && newMode !== "globe_view") {
+          heading = 0;
+          (window as any)._actualTravelDir = undefined;
+          warpStar.position.set(0, 0, 0);
+          camera.position.set(0, 3.5, 8);
+          controls.target.set(0, 1.5, 0);
+          currentSpeed = 0; // Reset player velocity for restart transition!
+        }
+
+        // Unhide player when (re)entering normal globe mode (from view or otherwise)
+        if (newMode === "globe") {
+          const ws = (window as any)._warpStar || warpStar;
+          const av = (window as any)._avatar || avatar;
+          if (ws) ws.visible = true;
+          if (av && av.mesh) av.mesh.visible = true;
+
+          // Restore typical globe chase control limits (chase code will bypass .enabled anyway)
+          controls.minDistance = 3;
+          controls.maxDistance = 15;
+          controls.minPolarAngle = 0;
+          controls.maxPolarAngle = Math.PI / 2 + 0.1;
+          controls.enabled = false;
+        }
 
         // Dispose previous celebration particles to keep memory and scene completely pristine!
         if (celebrationParticles.length > 0) {
@@ -1276,15 +2154,35 @@ export default function App() {
             camera.position.set(0, 3.5, 8);
             controls.target.set(0, 1.5, 0);
           } else if (trackType === "track_custom") {
-            heading = 0;
-            warpStar.position.set(0, 0, 0);
-            camera.position.set(0, 3.5, 8);
-            controls.target.set(0, 1.5, 0);
+            if ((window as any)._customStartPos) {
+              const startPos = (window as any)._customStartPos;
+              heading = (window as any)._customStartHeading !== undefined ? (window as any)._customStartHeading : 0;
+              warpStar.position.copy(startPos);
+              
+              // Position the camera slightly behind the ship based on heading
+              const camOffsetDir = new THREE.Vector3(0, 0, 8.0);
+              camOffsetDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), heading);
+              
+              camera.position.copy(startPos).add(camOffsetDir);
+              camera.position.y = startPos.y + 3.5;
+              controls.target.copy(startPos);
+              controls.target.y = startPos.y + 1.5;
+            } else {
+              heading = 0;
+              warpStar.position.set(0, 0, 0);
+              camera.position.set(0, 3.5, 8);
+              controls.target.set(0, 1.5, 0);
+            }
           } else if (trackType === "track_abyss") {
             heading = 0;
             warpStar.position.set(0, 150, 200);
             camera.position.set(0, 153.5, 208);
             controls.target.set(0, 151.5, 200);
+          } else if (trackType === "track_mario") {
+            heading = 0; // Face -Z (North)
+            warpStar.position.set(67.5, 0, 52.5); // Start slightly behind finish line (col 12, row 11)
+            camera.position.set(67.5, 3.5, 60.5); // Placed slightly behind and above
+            controls.target.set(67.5, 1.5, 52.5);
           }
 
           // Record start parameters for the intro cinematic
@@ -1317,6 +2215,9 @@ export default function App() {
             } else if (trackType === "track_abyss") {
               bgColor = 0x010815;
               fogDensity = 0.0035;
+            } else if (trackType === "track_mario") {
+              bgColor = 0x0c0721;
+              fogDensity = 0.001;
             }
 
             if ((window as any)._currentBgColorHex !== bgColor) {
@@ -1325,6 +2226,7 @@ export default function App() {
               } else {
                 s.background = new THREE.Color(bgColor);
               }
+              s.environment = null; // Ensure no globe HDR env map leaks into track modes
               if (s.fog && s.fog instanceof THREE.FogExp2) {
                 s.fog.color.setHex(bgColor);
               }
@@ -1332,6 +2234,15 @@ export default function App() {
             }
             if (s.fog && s.fog instanceof THREE.FogExp2) {
               s.fog.density = fogDensity;
+            }
+
+            // Ensure track-appropriate exposure/bloom during restarts (brighter neons)
+            const r = (window as any)._renderer;
+            const bp = (window as any)._bloomPass;
+            if (r) r.toneMappingExposure = 1.1;
+            if (bp) {
+              bp.strength = 0.35;
+              bp.threshold = 0.85;
             }
           }
 
@@ -1349,20 +2260,40 @@ export default function App() {
         } else {
           if ((window as any)._scene) {
             const s = (window as any)._scene as THREE.Scene;
-            const skyColor = 0xd4eaff;
-            if ((window as any)._currentBgColorHex !== skyColor) {
-              if (s.background && s.background instanceof THREE.Color) {
-                s.background.setHex(skyColor);
-              } else {
-                s.background = new THREE.Color(skyColor);
+            // Prefer the loaded HDR skybox + env map for globe; fall back to the light sky color only if not yet loaded
+            if (globeSkyboxRef.current) {
+              s.background = globeSkyboxRef.current;
+              if (globeEnvMapRef.current) {
+                s.environment = globeEnvMapRef.current;
               }
-              if (s.fog && s.fog instanceof THREE.FogExp2) {
-                s.fog.color.setHex(skyColor);
+              s.backgroundIntensity = 0.5; // Keep the sky from glowing too hard
+            } else {
+              const skyColor = 0xd4eaff;
+              if ((window as any)._currentBgColorHex !== skyColor) {
+                if (s.background && s.background instanceof THREE.Color) {
+                  s.background.setHex(skyColor);
+                } else {
+                  s.background = new THREE.Color(skyColor);
+                }
+                s.environment = null;
+                s.backgroundIntensity = 1;
+                if (s.fog && s.fog instanceof THREE.FogExp2) {
+                  s.fog.color.setHex(skyColor);
+                }
+                (window as any)._currentBgColorHex = skyColor;
               }
-              (window as any)._currentBgColorHex = skyColor;
             }
             if (s.fog && s.fog instanceof THREE.FogExp2) {
               s.fog.density = 0.003;
+            }
+
+            // Globe exposure/bloom during restart paths (low to control HDR glow)
+            const r = (window as any)._renderer;
+            const bp = (window as any)._bloomPass;
+            if (r) r.toneMappingExposure = 0.5;
+            if (bp) {
+              bp.strength = 0.12;
+              bp.threshold = 0.94;
             }
           }
           ground.visible = true;
@@ -1373,7 +2304,9 @@ export default function App() {
       }
 
       // Read combined inputs (UI touches + Keyboard)
-      const isGlobeMode = (window as any)._mode === "globe" || !(window as any)._mode;
+      const rawMode = (window as any)._mode;
+      const isGlobeMode = (rawMode === "globe" || !rawMode) && rawMode !== "globe_view";
+      const isPlanetView = rawMode === "globe_view" || appMode === "globe_view" || (window as any)._appMode === "globe_view";
 
       let chargeInput =
 
@@ -1446,6 +2379,7 @@ export default function App() {
       }
       if ((window as any)._previewHit) {
         avatar.triggerHit();
+        triggerDynamicLight(warpStar.position, 0xff3300, 10.0, 0.6); // bright red impact flash!
         (window as any)._previewHit = false;
       }
 
@@ -1515,7 +2449,9 @@ export default function App() {
       const climbInput = isGlobeMode && !!((window as any)._key_Space);
       const descendInput = isGlobeMode && !!((window as any)._key_ShiftLeft || (window as any)._key_ShiftRight);
 
-      if (isGlobeMode) {
+      const prevYPos = yPos;
+
+      if (isGlobeMode && !isPlanetView) {
         if (climbInput) {
           yPos = Math.min(45.0, yPos + 16.0 * dt);
         } else if (descendInput) {
@@ -1527,6 +2463,21 @@ export default function App() {
           }
         }
         yVel = 0;
+
+        // Landing / near-ground dust for air cruising using smoke kit puffs
+        if (prevYPos > 1.0 && yPos < 1.0) {
+          const dustPos = warpStar.position.clone();
+          dustPos.y = 0.4;
+          for (let i = 0; i < 2; i++) {
+            const vel = new THREE.Vector3(
+              (Math.random() - 0.5) * 3,
+              1.0 + Math.random() * 1.8,
+              (Math.random() - 0.5) * 3
+            );
+            vel.applyAxisAngle(upVec, heading);
+            addSpawningParticle(puffGeo, landingDustMat, dustPos, vel, 0.7, undefined, 1.5);
+          }
+        }
       } else {
         if (yPos > 0 || yVel !== 0) {
           // Dynamic Gravity: Glide if not charging, fall heavy if charging
@@ -1551,7 +2502,19 @@ export default function App() {
       }
 
       const isPlannerMode = (window as any)._appMode === "track_planner";
-      if ((window as any)._introActive) {
+      if (isPlanetView) {
+        // Planet view (space overview dev tool) must keep its own generous limits every frame.
+        // The normal chase code is skipped, and OrbitControls alone drives rotation + zoom around the globe center.
+        controls.minDistance = (window as any)._planetRadius ? (window as any)._planetRadius * 1.05 : 165;
+        controls.maxDistance = (window as any)._planetRadius ? (window as any)._planetRadius * 4.2 : 620;
+        controls.minPolarAngle = 0.01;
+        controls.maxPolarAngle = Math.PI - 0.01;
+        controls.enabled = true;
+        controls.enableDamping = true;
+        controls.update();
+
+        updateDevRegionMarkings();
+      } else if ((window as any)._introActive) {
         controls.minDistance = 1;
         controls.maxDistance = 500;
         controls.enabled = false;
@@ -1581,9 +2544,12 @@ export default function App() {
       let targetTiltX = 0;
       if (isGlobeMode) {
         if (climbInput) {
-          targetTiltX = -Math.PI / 6; // climb nose up
+          targetTiltX = -Math.PI / 5.5; // stronger nose-up for active climb
         } else if (descendInput) {
-          targetTiltX = Math.PI / 6; // dive nose down
+          targetTiltX = Math.PI / 5.5; // stronger nose-down for dive
+        } else if (yPos > 0 && currentlyMoving) {
+          // Sustained air cruise - gentle nose-up "lift" attitude + forward lean feel
+          targetTiltX = -Math.PI / 22;
         } else {
           targetTiltX = currentlyMoving ? Math.PI / 18 : 0;
         }
@@ -1623,18 +2589,32 @@ export default function App() {
       );
       warpStar.rotation.y = heading + (window as any)._currentSpin;
 
-      // Squash and Stretch "Alive" Logic
+      // Squash and Stretch "Alive" Logic (extended for air)
+      const isAirCruising = yPos > 0 && currentlyMoving;
+      const airBob = isAirCruising
+        ? Math.sin(clock.getElapsedTime() * 3.2) * 0.035 * (0.6 + currentSpeed / 25)
+        : 0;
+
       const squashScaleX =
         1.0 +
         (currentlyMoving && yPos === 0
           ? Math.sin(clock.getElapsedTime() * 20) * 0.06
+          : isAirCruising
+          ? Math.sin(clock.getElapsedTime() * 5.5) * 0.028 + airBob * 0.4
           : Math.sin(clock.getElapsedTime() * 4) * 0.03);
       const squashScaleY =
         1.0 -
         (currentlyMoving && yPos === 0
           ? Math.sin(clock.getElapsedTime() * 20) * 0.06
+          : isAirCruising
+          ? Math.sin(clock.getElapsedTime() * 5.5) * 0.028 - airBob * 0.6
           : Math.sin(clock.getElapsedTime() * 4) * 0.03); // Volume preservation
+
       warpStar.scale.set(squashScaleX, squashScaleY, squashScaleX);
+      // Apply subtle hover bob for air cruise feel (on top of yPos)
+      if (isAirCruising) {
+        warpStar.position.y += airBob;
+      }
 
       // Bloom / Emissive Pulse for Warp Star
       if (warpStar.userData.mainMaterial && warpStar.userData.detailMaterial) {
@@ -1865,7 +2845,7 @@ export default function App() {
       }
 
       // Steer heading in Globe Mode (always active, supporting stationary yaw turns)
-      if (isGlobeMode) {
+      if (isGlobeMode && !isPlanetView) {
         const turnRate = 2.4; // Sweet responsive rotation
         heading -= bankAngle * turnRate * dt;
         heading = (heading + Math.PI * 2) % (Math.PI * 2);
@@ -2045,6 +3025,9 @@ export default function App() {
                 const absSeverity = Math.abs(crashSeverity); // 1 = direct head-on, 0 = parallel
                 const speedFactor = 1.0 - (0.15 * absSeverity * stepDt * 60); 
                 currentSpeed = Math.max(1.0, currentSpeed * Math.max(0.7, speedFactor));
+                if (absSeverity > 0.15) {
+                  triggerDynamicLight(warpStar.position, 0xff3300, 8.0, 0.35); // bright red crash flash!
+                }
               } else {
                 // Moving away from or parallel to the wall -> Free movement, no speed reduction or projection needed!
                 warpStar.position.addScaledVector(actualTravelDir, stepDist);
@@ -2069,7 +3052,10 @@ export default function App() {
                   Math.random() * 2.5 + 1.0, // send sparks flying upwards elegantly!
                   Math.cos(sprayAngle) * spraySpeed
                 );
-                addSpawningParticle(particleGeo, sparkMatScrape, closestHit.point, sparkVel, 0.5, sparkLife);
+                addSpawningParticle(puffGeo, sparkParticleMat, closestHit.point, sparkVel, 0.5, sparkLife, 0.8 + Math.random() * 0.6, 0.2);
+                if (Math.random() < 0.22) {
+                  triggerDynamicLight(closestHit.point, 0xffaa00, 3.5, 0.15);
+                }
               }
             } else {
               // Free movement when not scraping the wall
@@ -2166,7 +3152,16 @@ export default function App() {
             }
           }
 
-          if (isPlannerMode) {
+          if (isPlanetView) {
+            // Planet view dev tool: OrbitControls fully drives camera (space overview, full 360, fixed fov from entry)
+            controls.update();
+
+            // Lazy-create dev region/hex markings the first time we enter space view and data is ready
+            if (!regionVisualsReady) {
+              createDevRegionMarkings();
+            }
+            updateDevRegionMarkings();
+          } else if (isPlannerMode) {
             targetCamPos.copy(warpStar.position);
             targetCamPos.y = 300; // Super high up
             targetCamPos.z += 0.1; // prevent gimbal lock
@@ -2333,6 +3328,41 @@ export default function App() {
             localOffset.applyAxisAngle(upVec, heading);
             targetCamPos.copy(warpStar.position).add(localOffset);
 
+            // === Globe camera user orbit + zoom (best-effort manual control on top of auto-chase) ===
+            if (isGlobeMode) {
+              let azOff = (window as any)._globeCamAzimuthOffset || 0;
+              let polOff = (window as any)._globeCamPolarOffset || 0;
+              let userDist = (window as any)._globeCamDistance || 8.5;
+
+              // Auto-return toward perfect behind-the-ship when not actively dragging.
+              // This preserves the original cinematic auto-chase personality.
+              if (!isDraggingGlobeCam) {
+                azOff = THREE.MathUtils.lerp(azOff, 0, 2.4 * dt);
+                polOff = THREE.MathUtils.lerp(polOff, 0, 3.0 * dt);
+                (window as any)._globeCamAzimuthOffset = azOff;
+                (window as any)._globeCamPolarOffset = polOff;
+              }
+
+              // Orbit the current chase vector horizontally (azimuth) around the ship
+              let toCam = targetCamPos.clone().sub(warpStar.position);
+              toCam.applyAxisAngle(upVec, azOff);
+
+              // Tilt the camera up/down (polar) around the local "right" axis of the current horizontal offset
+              const hLen = Math.sqrt(toCam.x * toCam.x + toCam.z * toCam.z);
+              if (hLen > 0.001) {
+                const right = new THREE.Vector3(-toCam.z, 0, toCam.x).normalize();
+                toCam.applyAxisAngle(right, polOff);
+              }
+
+              // Apply zoom distance
+              const curLen = toCam.length();
+              if (curLen > 0.001) {
+                toCam.multiplyScalar(userDist / curLen);
+              }
+
+              targetCamPos.copy(warpStar.position).add(toCam);
+            }
+
             const camLerp = isGlobeMode ? 3.8 : 5.0; // Smooth yet responsive follow camera
             camera.position.lerp(targetCamPos, camLerp * dt);
 
@@ -2363,7 +3393,7 @@ export default function App() {
             controls.target.copy(smoothedLookAt);
           }
 
-      if (currentlyMoving && (window as any)._mode !== "track") {
+      if (currentlyMoving && (window as any)._mode !== "track" && !isPlanetView) {
           // --- FREE EXTRA COZY ROAMING GLOBE ROLL ---
           // Rotate the globe based on the player's 360 degree heading and speed
           const moveDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), heading);
@@ -2376,9 +3406,10 @@ export default function App() {
 
           const rotationalSpeed = -(currentSpeed * 8.0 * dt) / 140; // Scale rotation perfectly relative to our massive globe's radius
           ground.rotateOnWorldAxis(rollAxis, rotationalSpeed);
+      }
 
-          // --- COZY GLOBE INTEGRATIONS & SUBSYSTEMS ---
-          // 1. Slow Rotating Directional Light Source (Day/Night Cycle)
+      // --- COZY GLOBE INTEGRATIONS & SUBSYSTEMS (run in normal globe + planet overview for live day/night on regions) ---
+      if (isGlobeMode || isPlanetView) {
           const hemiLight = (window as any)._hemiLight;
           const dirLight = (window as any)._dirLight;
           if (dirLight && hemiLight) {
@@ -2433,8 +3464,8 @@ export default function App() {
                   );
                   
                   addSpawningParticle(
-                    smokeParticleGeo,
-                    smokeParticleMat,
+                    puffGeo,
+                    airExhaustMat,
                     puffPos,
                     puffVel,
                     0.75, // max life
@@ -2496,6 +3527,7 @@ export default function App() {
                 
                 // Sound cue click
                 playSound("chime");
+                triggerDynamicLight(tempWorldPos, 0x00ffaa, 7.0, 0.5); // cyan-green POI flash!
 
                 // Update react states seamlessly
                 setDiscoveredPOIs(prev => {
@@ -2542,22 +3574,23 @@ export default function App() {
                   item.mesh.visible = false; // Hide 3D asset
 
                   playSound("coin");
+                  triggerDynamicLight(tempWorldPos, 0xffd700, 6.0, 0.4); // bright gold coin flash!
 
                   // Sparkle particle burst
-                  for (let p = 0; p < 8; p++) {
+                  for (let p = 0; p < 15; p++) {
                     const sparkVel = new THREE.Vector3(
-                      (Math.random() - 0.5) * 5.0,
-                      (Math.random() - 0.5) * 5.0,
-                      (Math.random() - 0.5) * 5.0
+                      (Math.random() - 0.5) * 6.0,
+                      (Math.random() - 0.5) * 6.0,
+                      (Math.random() - 0.5) * 6.0
                     );
                     addSpawningParticle(
-                      particleGeo,
-                      particleMat, // standard gold particle
+                      puffGeo,
+                      starParticleMat,
                       tempWorldPos,
                       sparkVel,
-                      1.0,
-                      1.0,
-                      1.4
+                      0.8,
+                      0.8,
+                      1.2 + Math.random() * 0.8
                     );
                   }
 
@@ -2575,58 +3608,51 @@ export default function App() {
           }
 
           // 5.5 Floating Ring Gates Update & Collision Detection
+          const elapsed = clock.getElapsedTime();
+
+          // === 5.5A. Static (Standard) Ring Gate Update & Collisions ===
           if ((window as any)._ringGates) {
             const tempPos = new THREE.Vector3();
             const rings = (window as any)._ringGates as any[];
             rings.forEach((ring: any) => {
               if (ring.mesh) {
-                // Spin/Rotate ring slowly
+                // Aesthetic spin animations
                 ring.mesh.rotation.y += 0.8 * dt;
 
-                // Pulse emissive intensity
-                if (ring.mesh.material) {
-                  ring.mesh.material.emissiveIntensity = 2.0 + Math.sin(clock.getElapsedTime() * 4.0) * 1.0;
+                // Animate golden ring orbital gems
+                if (ring.gemGroup) {
+                  ring.gemGroup.rotation.z += 1.2 * dt;
                 }
 
-                if (!ring.collected) {
+                if (ring.mesh.material) {
+                  ring.mesh.material.emissiveIntensity = 2.0 + Math.sin(elapsed * 4.0) * 1.0;
+                }
+
+                if (!ring.collected && ring.mesh.visible) {
                   ring.mesh.getWorldPosition(tempPos);
                   const dist = warpStar.position.distanceTo(tempPos);
-                  if (dist < 5.0) {
+                  
+                  if (dist < 6.0) { // Slightly more generous collision box for high-speed exploration!
                     ring.collected = true;
-                    ring.mesh.visible = false;
-                    
-                    playSound("chime");
-                    
-                    // Speed boost
-                    boostMax = 3.5;
-                    boostTime = 1.2;
-                    
-                    // Barrel roll
-                    (window as any)._targetBarrelRoll = ((window as any)._targetBarrelRoll || 0) + Math.PI * 2;
-                    
-                    ringsCollected++;
-                    
-                    // Update HUD
-                    if (globeRingsCollectedRef.current) {
-                      globeRingsCollectedRef.current.innerText = ringsCollected.toString();
-                    }
 
-                    // Particle burst: 12 sparkly particles
-                    for (let p = 0; p < 12; p++) {
-                      const sparkVel = new THREE.Vector3(
-                        (Math.random() - 0.5) * 8.0,
-                        (Math.random() - 0.5) * 8.0,
-                        (Math.random() - 0.5) * 8.0
-                      );
-                      addSpawningParticle(
-                        particleGeo,
-                        ring.mesh.material,
-                        tempPos,
-                        sparkVel,
-                        1.2, // maxLife
-                        1.2, // life
-                        1.5  // scaleMultiplier
-                      );
+                    if (ring.isGoldenTrigger) {
+                      // Trigger challenge initiation
+                      startTimeAttackTrial(tempPos);
+                      
+                      // Schedule trigger ring respawn timer
+                      setTimeout(() => {
+                        ring.collected = false;
+                      }, 10000);
+                    } else {
+                      // Standard blue ring collection
+                      ring.mesh.visible = false;
+                      playSound("chime");
+                      triggerDynamicLight(tempPos, 0x00f3ff, 8.0, 0.5);
+                      
+                      // Trigger small ship boost details
+                      boostMax = 3.5;
+                      boostTime = 1.2;
+                      (window as any)._targetBarrelRoll = ((window as any)._targetBarrelRoll || 0) + Math.PI * 2;
                     }
                   }
                 }
@@ -2634,9 +3660,82 @@ export default function App() {
             });
           }
 
+          // === 5.5B. Active Challenge Loop Updates ===
+          if ((window as any)._timeAttackActive) {
+            // 1. Update active destination ring movements and animations
+            const tGate = (window as any)._activeTrialGateMesh;
+            if (tGate) {
+              tGate.rotation.y += 1.8 * dt;
+              tGate.traverse((child: any) => {
+                if (child.isMesh && child.material) {
+                  child.material.emissiveIntensity = 3.0 + Math.sin(elapsed * 6.0) * 1.5;
+                }
+              });
+              if ((window as any)._activeTrialGateOrbital) {
+                (window as any)._activeTrialGateOrbital.rotation.z += 2.8 * dt;
+              }
+
+              // Check collision with the target gate
+              const tGatePos = new THREE.Vector3();
+              tGate.getWorldPosition(tGatePos);
+              const distToTGate = warpStar.position.distanceTo(tGatePos);
+              if (distToTGate < 7.0) { 
+                handleTrialGateCollected();
+              }
+            }
+
+            // 2. Check collision with pathway shards
+            const tShards = (window as any)._activeTrialShards as any[];
+            if (tShards) {
+              const shardWorldPos = new THREE.Vector3();
+              tShards.forEach((shard: any) => {
+                if (!shard.collected && shard.mesh) {
+                  shard.mesh.rotation.y += 2.2 * dt;
+                  shard.mesh.rotation.z += 0.8 * dt;
+                  
+                  shard.mesh.getWorldPosition(shardWorldPos);
+                  const distToShard = warpStar.position.distanceTo(shardWorldPos);
+                  if (distToShard < 5.5) {
+                    shard.collected = true;
+                    shard.mesh.visible = false;
+                    playSound("coin");
+                    triggerDynamicLight(shardWorldPos, 0xffff33, 6.0, 0.35);
+
+                    const aMult = (window as any)._timeAttackMultiplier || 1.0;
+                    setCurGlimmerShards(prev => prev + Math.round(15 * aMult));
+                  }
+                }
+              });
+            }
+
+            // 3. Time decay tracking
+            const tRemaining = (window as any)._timeAttackTimeLeft - dt;
+            (window as any)._timeAttackTimeLeft = tRemaining;
+            setTimeAttackTimeLeft(tRemaining);
+            if (tRemaining <= 0) {
+              endTimeAttackChoral(false);
+            }
+          }
+
           // 6. Direct HUD injection of active Altitude & speed telemetry
           if (globeAltitudeTextRef.current) {
             globeAltitudeTextRef.current.innerText = `${Math.round(yPos * 30)}m`;
+          }
+
+          // Time-Attack Timer Countdown
+          if ((window as any)._timeAttackActive) {
+            const nextTime = (window as any)._timeAttackTimeLeft - dt;
+            if (nextTime <= 0) {
+              // Defeat!
+              (window as any)._setTimeAttackActive(false);
+              playSound("screech");
+              
+              setCurrentDiscoverMessage("⚡ TIME-ATTACK DEFEAT!\nTime ran out!");
+              setShowDiscoverBanner(true);
+              setTimeout(() => setShowDiscoverBanner(false), 4000);
+            } else {
+              (window as any)._setTimeAttackTimeLeft(nextTime);
+            }
           }
       }
 
@@ -2646,6 +3745,8 @@ export default function App() {
         // Trigger 'whoosh' sound when initiating details of a speed boost
         if (isBoosting && !wasBoosting) {
           playSound("whoosh");
+          vaporConeLife = 0.25; // 250ms duration sonic boom vapor cone
+          triggerDynamicLight(warpStar.position, 0xffdd44, 9.0, 0.4); // bright yellow boost flash!
         }
         wasBoosting = isBoosting;
 
@@ -2677,6 +3778,11 @@ export default function App() {
             if (chargeLevel >= 100 && Math.random() > 0.4) {
               selectedSparkMat = sparkMatUltra;
               scaleMultiplier = 1.6;
+              if (Math.random() < 0.28) {
+                triggerDynamicLight(warpStar.position, 0xffffff, 4.5, 0.2);
+              }
+            } else if (chargeLevel >= 80 && Math.random() < 0.12) {
+              triggerDynamicLight(warpStar.position, 0xfa007a, 3.5, 0.2);
             }
 
             // Spawn sparks specifically from the rear wheels to provide dramatic turning feedback!
@@ -2694,7 +3800,7 @@ export default function App() {
               Math.random() * 2.0 + 0.5,
               Math.cos(sprayAngleLeft) * spraySpeedLeft
             );
-            addSpawningParticle(particleGeo, selectedSparkMat, sparkPosLeft, driftVelLeft, 0.75, driftLifeLeft, scaleMultiplier);
+            addSpawningParticle(puffGeo, selectedSparkMat, sparkPosLeft, driftVelLeft, 0.75, driftLifeLeft, scaleMultiplier, 0.15);
 
             // Right Wheel offset (sideways: 0.75, vertical coordinates: -0.12, behind the ship: 1.05)
             const rightOffset = new THREE.Vector3(0.75, -0.12, 1.05);
@@ -2710,7 +3816,7 @@ export default function App() {
               Math.random() * 2.0 + 0.5,
               Math.cos(sprayAngleRight) * spraySpeedRight
             );
-            addSpawningParticle(particleGeo, selectedSparkMat, sparkPosRight, driftVelRight, 0.75, driftLifeRight, scaleMultiplier);
+            addSpawningParticle(puffGeo, selectedSparkMat, sparkPosRight, driftVelRight, 0.75, driftLifeRight, scaleMultiplier, 0.15);
           }
         }
 
@@ -2729,7 +3835,7 @@ export default function App() {
             );
             smokeVelLeft.applyAxisAngle(upVec, heading);
             const smokeLifeLeft = 0.5 + Math.random() * 0.45;
-            addSpawningParticle(smokeParticleGeo, smokeParticleMat, smokePosLeft, smokeVelLeft, 0.9, smokeLifeLeft, 1.3 + Math.random() * 0.7);
+            addSpawningParticle(puffGeo, trailSmokeMat, smokePosLeft, smokeVelLeft, 0.9, smokeLifeLeft, 1.3 + Math.random() * 0.7);
 
             // Right Wheel offset (sideways: 0.75, vertical coordinates: -0.12, behind the ship: 1.05)
             const rightOffset = new THREE.Vector3(0.75, -0.12, 1.05);
@@ -2743,7 +3849,7 @@ export default function App() {
             );
             smokeVelRight.applyAxisAngle(upVec, heading);
             const smokeLifeRight = 0.5 + Math.random() * 0.45;
-            addSpawningParticle(smokeParticleGeo, smokeParticleMat, smokePosRight, smokeVelRight, 0.9, smokeLifeRight, 1.3 + Math.random() * 0.7);
+            addSpawningParticle(puffGeo, trailSmokeMat, smokePosRight, smokeVelRight, 0.9, smokeLifeRight, 1.3 + Math.random() * 0.7);
           }
         }
 
@@ -2776,6 +3882,37 @@ export default function App() {
 
         const emitThreshold = isBoosting ? 0.05 : chargeInput ? 0.7 : 0.3;
 
+        // Speed Boost Warp Lines: screen streaks during boosts
+        if (isBoosting && Math.random() < 0.25) {
+          const camDir = new THREE.Vector3();
+          camera.getWorldDirection(camDir);
+          
+          const spawnCenter = camera.position.clone().addScaledVector(camDir, 6.0);
+          
+          const tempVec = Math.abs(camDir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+          const rightVec = new THREE.Vector3().crossVectors(camDir, tempVec).normalize();
+          const upVecPerp = new THREE.Vector3().crossVectors(rightVec, camDir).normalize();
+          
+          const randAngle = Math.random() * Math.PI * 2;
+          const randRadius = 1.8 + Math.random() * 3.8;
+          
+          const spawnPos = spawnCenter.clone()
+            .addScaledVector(rightVec, Math.cos(randAngle) * randRadius)
+            .addScaledVector(upVecPerp, Math.sin(randAngle) * randRadius);
+            
+          const warpVel = camDir.clone().multiplyScalar(-40.0);
+          
+          addSpawningParticle(
+            puffGeo,
+            warpParticleMat,
+            spawnPos,
+            warpVel,
+            0.35,
+            0.35,
+            2.0 + Math.random() * 2.0
+          );
+        }
+
         // Emit glowing trail particles
         if (Math.random() > emitThreshold) {
           const isBoostParticle = isBoosting && Math.random() > 0.3;
@@ -2796,7 +3933,15 @@ export default function App() {
               .applyAxisAngle(upVec, heading)
               .multiplyScalar(particleSpeed);
 
-            addSpawningParticle(boostParticleGeo, boostParticleMat, tempTrailPos, backVel, 0.6);
+            addSpawningParticle(
+              puffGeo,
+              boostAirSmokeMat,
+              tempTrailPos,
+              backVel,
+              0.5,
+              0.5,
+              1.8 + Math.random() * 1.2
+            );
           } else {
             // Spawn strictly behind the star (+Z direction locally relative to heading)
             localOffset.set(
@@ -2815,7 +3960,105 @@ export default function App() {
             );
             trailVel.applyAxisAngle(upVec, heading);
 
-            addSpawningParticle(particleGeo, particleMat, tempTrailPos, trailVel, 0.8);
+            // Alternate between flame and smoke particles for a realistic plume!
+            const useSmoke = Math.random() < 0.35;
+            addSpawningParticle(
+              puffGeo, 
+              useSmoke ? trailSmokeMat : flameParticleMat, 
+              tempTrailPos, 
+              trailVel, 
+              useSmoke ? 0.8 : 0.45, 
+              useSmoke ? 0.8 : 0.45, 
+              (useSmoke ? 1.2 : 0.8) + Math.random() * 0.5
+            );
+          }
+        }
+
+        // Enhanced air exhaust / smoke using the smoke-particles kit (white puffs for normal cruise, explosion for boost)
+        // Makes climbing, sustained air cruise, and boosting feel richer and more alive.
+        if (isGlobeMode && yPos > 0) {
+          const rearOffset = new THREE.Vector3(0, -0.4, 1.4);
+          rearOffset.applyAxisAngle(upVec, heading);
+          const exhaustPos = warpStar.position.clone().add(rearOffset);
+
+          const isClimbing = climbInput;
+          const isDescending = descendInput;
+
+          // Adjust velocity of exhaust based on climbing/descending
+          const exhaustVel = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.8,
+            isClimbing ? -2.5 - Math.random() * 2.0 : 0.3 + Math.random() * 0.6, // shoot down hard if climbing
+            -2.2 - currentSpeed * 0.08
+          );
+          exhaustVel.applyAxisAngle(upVec, heading);
+
+          // If climbing, increase emission rate or scale, and use flame texture
+          const useBoostSmoke = isBoosting;
+          const currentMat = useBoostSmoke 
+            ? boostAirSmokeMat 
+            : isClimbing 
+              ? (Math.random() > 0.4 ? flameParticleMat : airExhaustMat)
+              : airExhaustMat;
+
+          const scaleMultiplier = useBoostSmoke 
+            ? 2.6 
+            : isClimbing 
+              ? 2.0 + Math.random() * 0.6  // larger engine plume under load
+              : 1.5 + Math.random() * 0.5;
+
+          addSpawningParticle(
+            puffGeo,
+            currentMat,
+            exhaustPos,
+            exhaustVel,
+            useBoostSmoke ? 1.1 : isClimbing ? 0.6 : 0.75,
+            undefined,
+            scaleMultiplier
+          );
+
+          // Add extra downward-pointing thrust sparks when climbing to show thruster power!
+          if (isClimbing && Math.random() < 0.45) {
+            const sparkVel = new THREE.Vector3(
+              (Math.random() - 0.5) * 2.0,
+              -5.0 - Math.random() * 5.0, // push down hard
+              -3.0
+            );
+            sparkVel.applyAxisAngle(upVec, heading);
+            addSpawningParticle(puffGeo, sparkParticleMat, exhaustPos, sparkVel, 0.4, 0.4, 0.8);
+          }
+
+          // Aerodynamic Wingtip Vortices (trailing vapor lines) when diving or gliding fast in the air
+          const shouldSpawnVortex = isDescending || (currentlyMoving && currentSpeed > 2.0);
+          if (shouldSpawnVortex && Math.random() < 0.38) {
+            const leftWing = new THREE.Vector3(-1.25, -0.1, 0.2);
+            leftWing.applyAxisAngle(upVec, heading);
+            const rightWing = new THREE.Vector3(1.25, -0.1, 0.2);
+            rightWing.applyAxisAngle(upVec, heading);
+
+            const vVel = new THREE.Vector3(0, 0, -4.5 - currentSpeed * 0.1);
+            vVel.applyAxisAngle(upVec, heading);
+
+            // Spawn left wingtip vapor trail
+            addSpawningParticle(
+              puffGeo,
+              warpParticleMat, // thin trace/warp streak texture
+              warpStar.position.clone().add(leftWing),
+              vVel,
+              0.4,
+              0.4,
+              0.6 + Math.random() * 0.4
+            );
+
+            // Spawn right wingtip vapor trail
+            addSpawningParticle(
+              puffGeo,
+              warpParticleMat,
+              warpStar.position.clone().add(rightWing),
+              vVel,
+              0.4,
+              0.4,
+              0.6 + Math.random() * 0.4
+            );
           }
         }
       }
@@ -2842,44 +4085,97 @@ export default function App() {
           }
         }
 
-        // Generate water spray if skimming low over the water biome
-        if (closestTile.biome === "water" && heightAboveWater < 4.8 && currentSpeed > 0.5) {
-          const waterSurfacePos = globeCenter.clone().addScaledVector(dirToShip, planetRadius - 0.1);
+        // Generate biome-specific particles if skimming low over the ground biomes
+        if (heightAboveWater < 4.8 && currentSpeed > 0.5) {
+          const surfacePos = globeCenter.clone().addScaledVector(dirToShip, planetRadius - 0.1);
           
-          // Spawn 1-2 water spray foam particles per frame
-          const numSprayParticles = Math.random() < 0.6 ? 2 : 1;
-          for (let k = 0; k < numSprayParticles; k++) {
-            const sprayPos = waterSurfacePos.clone().add(new THREE.Vector3(
-              (Math.random() - 0.5) * 1.5,
-              (Math.random() - 0.5) * 0.25,
-              (Math.random() - 0.5) * 1.5
-            ));
+          let selectedMat = null;
+          let isSnow = false;
+          let isGrass = false;
+          
+          if (closestTile.biome === "water") {
+            selectedMat = (window as any)._waterSprayMat || waterSprayMat;
+          } else if (closestTile.biome === "sand") {
+            selectedMat = (window as any)._sandSprayMat || sandSprayMat;
+          } else if (closestTile.biome === "grass" || closestTile.biome === "hill") {
+            selectedMat = (window as any)._grassSprayMat || grassSprayMat;
+            isGrass = true;
+          } else if (closestTile.biome === "mountain") {
+            selectedMat = (window as any)._snowSprayMat || snowSprayMat;
+            isSnow = true;
+          }
 
-            const sprayVel = dirToShip.clone().multiplyScalar(0.8 + Math.random() * 1.5); // splash upwards from surface
-            const horizontalSpread = new THREE.Vector3(
-              (Math.random() - 0.5) * 3.0,
-              0,
-              (Math.random() - 0.5) * 3.0
-            );
-            sprayVel.add(horizontalSpread);
+          if (selectedMat) {
+            const numSprayParticles = Math.random() < 0.6 ? 2 : 1;
+            for (let k = 0; k < numSprayParticles; k++) {
+              const sprayPos = surfacePos.clone().add(new THREE.Vector3(
+                (Math.random() - 0.5) * 1.5,
+                (Math.random() - 0.5) * 0.25,
+                (Math.random() - 0.5) * 1.5
+              ));
 
-            const sprayLife = 0.45 + Math.random() * 0.4;
-            const sprayScale = 1.0 + Math.random() * 0.8;
-            addSpawningParticle(
-              smokeParticleGeo,
-              (window as any)._waterSprayMat || smokeParticleMat,
-              sprayPos,
-              sprayVel,
-              0.85,
-              sprayLife,
-              sprayScale
-            );
+              const sprayVel = dirToShip.clone().multiplyScalar(0.8 + Math.random() * 1.5); // splash upwards from surface
+              const horizontalSpread = new THREE.Vector3(
+                (Math.random() - 0.5) * 3.0,
+                0,
+                (Math.random() - 0.5) * 3.0
+              );
+              sprayVel.add(horizontalSpread);
+
+              const sprayLife = isSnow ? 0.3 + Math.random() * 0.3 : 0.45 + Math.random() * 0.4;
+              const sprayScale = isGrass 
+                ? 0.4 + Math.random() * 0.4 
+                : isSnow 
+                  ? 0.5 + Math.random() * 0.5
+                  : 1.0 + Math.random() * 0.8;
+
+              addSpawningParticle(
+                puffGeo,
+                selectedMat,
+                sprayPos,
+                sprayVel,
+                isSnow ? 0.6 : 0.85,
+                sprayLife,
+                sprayScale
+              );
+            }
           }
         }
       }
 
       // Update Particle Lifecycles
-      particleSystem.update(dt);
+      particleSystem.update(dt, camera);
+
+      // Update dynamic lights decay
+      for (let l = 0; l < dynamicLights.length; l++) {
+        const dl = dynamicLights[l];
+        if (dl.life > 0) {
+          dl.life -= dt;
+          if (dl.life <= 0) {
+            dl.light.intensity = 0;
+          } else {
+            dl.light.intensity = (dl.life / dl.maxLife) * dl.startIntensity;
+          }
+        }
+      }
+
+      // Update Prandtl-Glauert vapor cone (Shockwave Ring) animation
+      if (vaporConeLife > 0) {
+        vaporConeLife -= dt;
+        if (vaporConeLife <= 0) {
+          vaporCone.visible = false;
+        } else {
+          vaporCone.visible = true;
+          const progress = 1.0 - (vaporConeLife / 0.25); // 0.0 to 1.0
+          const currentScale = 1.0 + progress * 6.5; // expand ring significantly
+          vaporCone.scale.setScalar(currentScale);
+          vaporCone.position.z = 0.5 + progress * 3.5; // shoot backwards along ship tail
+          const opacity = Math.max(0, (1.0 - progress) * 0.75); // fade out
+          (vaporCone.material as THREE.MeshBasicMaterial).opacity = opacity;
+        }
+      } else {
+        vaporCone.visible = false;
+      }
 
       // Update Skid Marks Lifecycles (Pooled & fade-out)
       for (let i = 0; i < skidPool.length; i++) {
@@ -2928,7 +4224,7 @@ export default function App() {
               Math.sin(spiralAngle) * 0.5,
               3.0 + Math.random() * 2.0,
             );
-            addSpawningParticle(projTrailGeo, projectileTrailMat, tempTrailPos, trailVel, 0.4);
+            addSpawningParticle(puffGeo, projectileTrailMat, tempTrailPos, trailVel, 0.4);
           }
         }
       }
@@ -3202,22 +4498,34 @@ export default function App() {
       }
 
       // Update advanced Avatar State
-      avatar.update(
-        dt,
-        currentlyMoving && yPos === 0,
-        yPos > 0,
-        chargeInput,
-        bankAngle,
-        0, // Spin inherited from parent Warp Star
-        yVel,
-        avatarState,
-        driftInput,
-      );
+      // Enhanced flight state for air animations (climb/descend/sustained air)
+      if (!isPlanetView) {
+        const isClimbingAir = isGlobeMode && climbInput && yPos > 0;
+        const isDescendingAir = isGlobeMode && descendInput && yPos > 0;
+        const isSustainedAirCruise = yPos > 0 && currentlyMoving && !isClimbingAir && !isDescendingAir;
 
-      // Speed FOV effect
-      const targetFov = 45 + Math.max(0, currentSpeed - 5.0) * 1.5;
-      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 5);
-      camera.updateProjectionMatrix();
+        avatar.update(
+          dt,
+          currentlyMoving && yPos === 0,
+          yPos > 0,
+          chargeInput,
+          bankAngle,
+          0, // Spin inherited from parent Warp Star
+          yVel,
+          avatarState,
+          driftInput,
+          isClimbingAir,
+          isDescendingAir,
+          isSustainedAirCruise,
+        );
+      }
+
+      // Speed FOV effect (skip in space overview to keep stable cinematic framing)
+      if (!isPlanetView) {
+        const targetFov = 45 + Math.max(0, currentSpeed - 5.0) * 1.5;
+        camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 5);
+        camera.updateProjectionMatrix();
+      }
 
       composer.render();
     };
@@ -3254,6 +4562,23 @@ export default function App() {
       // No need to remove elements since we use a React <canvas> ref now
       avatar.dispose();
       renderer.dispose();
+
+      // Dispose HDR skybox resources (background + env map) to avoid memory leaks
+      if (globeSkyboxRef.current) {
+        globeSkyboxRef.current.dispose();
+        globeSkyboxRef.current = null;
+      }
+      if (globeEnvMapRef.current) {
+        globeEnvMapRef.current.dispose();
+        globeEnvMapRef.current = null;
+      }
+
+      // Remove globe camera manual controls listeners
+      canvasEl.removeEventListener("pointerdown", handleGlobeCamDown);
+      canvasEl.removeEventListener("pointermove", handleGlobeCamMove);
+      canvasEl.removeEventListener("pointerup", handleGlobeCamUp);
+      canvasEl.removeEventListener("pointerleave", handleGlobeCamUp);
+      canvasEl.removeEventListener("wheel", handleGlobeCamWheel);
     };
   }, []);
 
@@ -3262,6 +4587,14 @@ export default function App() {
     (window as any)._previewMoving = isMoving;
     (window as any)._previewJumping = isJumping;
   }, [isMoving, isJumping]);
+
+  // Keep _appMode in sync (used by modeSwitch + animate guards + env)
+  useEffect(() => {
+    (window as any)._appMode = appMode;
+    if (appMode === "globe_view" || appMode === "globe") {
+      (window as any)._mode = appMode === "globe_view" ? "globe_view" : "globe";
+    }
+  }, [appMode]);
 
   useEffect(() => {
     const trackGroup = (window as any)._trackGroup as THREE.Group;
@@ -3295,6 +4628,9 @@ export default function App() {
       } else if (appMode === "track_abyss") {
         bgColor = 0x010815;
         fogDensity = 0.0035;
+      } else if (appMode === "track_mario") {
+        bgColor = 0x0c0721;
+        fogDensity = 0.001;
       }
 
       const isGlobe = (appMode === "globe" || appMode === "globe_view");
@@ -3312,8 +4648,46 @@ export default function App() {
         } else {
           scene.background = new THREE.Color(0x0a0516);
         }
+        if (globeEnvMapRef.current) {
+          scene.environment = globeEnvMapRef.current;
+        } else {
+          scene.environment = null;
+        }
+        scene.backgroundIntensity = 0.45; // Tames the luminous HDR sky/sun without killing the nice IBL from the env map
+        scene.environmentIntensity = 0.85;
+        // Dim the extra directional + hemi lights when the HDR env map is providing most of the IBL
+        // (prevents double-brightening the scene on top of the skybox sun)
+        const hemi = (window as any)._hemiLight as THREE.HemisphereLight | undefined;
+        const dir = (window as any)._dirLight as THREE.DirectionalLight | undefined;
+        if (hemi) hemi.intensity = 0.35;
+        if (dir) dir.intensity = 0.65;
+
+        // Globe-specific exposure and bloom to prevent HDR sun over-glow (only in globe)
+        const r = (window as any)._renderer;
+        const bp = (window as any)._bloomPass;
+        if (r) r.toneMappingExposure = 0.5;
+        if (bp) {
+          bp.strength = 0.12;
+          bp.threshold = 0.94;
+        }
       } else {
         scene.background = new THREE.Color(bgColor);
+        scene.environment = null;
+        scene.backgroundIntensity = 1;
+        // Restore brighter lights for track modes (no HDR env)
+        const hemi = (window as any)._hemiLight as THREE.HemisphereLight | undefined;
+        const dir = (window as any)._dirLight as THREE.DirectionalLight | undefined;
+        if (hemi) hemi.intensity = 0.8;
+        if (dir) dir.intensity = 1.2;
+
+        // Restore original exposure and bloom for tracks (brighter neons, proper track lighting)
+        const r2 = (window as any)._renderer;
+        const bp2 = (window as any)._bloomPass;
+        if (r2) r2.toneMappingExposure = 1.1;
+        if (bp2) {
+          bp2.strength = 0.35;
+          bp2.threshold = 0.85;
+        }
       }
 
       if (scene.fog && scene.fog instanceof THREE.FogExp2) {
@@ -3327,6 +4701,10 @@ export default function App() {
     while (trackGroup.children.length > 0) {
       trackGroup.remove(trackGroup.children[0]);
     }
+
+    // Clear cached physics collision meshes to force rebuild on next physics frame
+    (window as any)._cachedDriveableMeshes = undefined;
+    (window as any)._cachedWallMeshes = undefined;
 
     if (appMode.startsWith("track")) {
       trackGroup.visible = true;
@@ -3343,6 +4721,8 @@ export default function App() {
         trackResult = buildRailTrack(trackGroup);
       } else if (appMode === "track_nebula") {
         trackResult = buildNebulaBeltTrack(trackGroup);
+      } else if (appMode === "track_mario") {
+        trackResult = buildMarioTrack(trackGroup);
       } else {
         trackResult = buildRetroTrack(trackGroup);
       }
@@ -3458,28 +4838,34 @@ export default function App() {
         curGlimmerShards={curGlimmerShards}
       />
 
-      {/* Flight Telemetry HUD */}
-      <FlightHUD
-        appMode={appMode}
-        setAppMode={setAppMode}
-        countdownText={countdownText}
-        showVictoryCard={showVictoryCard}
-        finalLapTimes={finalLapTimes}
-        bestLapTime={bestLapTime}
-        isNewRecord={isNewRecord}
-        handleRestart={handleRestart}
-        formatMsToTime={formatMsToTime}
-        fastestLapIndex={fastestLapIndex}
-        parseTimeToMs={parseTimeToMs}
-        lapTextRef={lapTextRef}
-        timeTextRef={timeTextRef}
-        bestTimeTextRef={bestTimeTextRef}
-        playerDotRef={playerDotRef}
-        speedTextRef={speedTextRef}
-        boostBarRef={boostBarRef}
-        boostIndicatorRef={boostIndicatorRef}
-        chargeBarRef={chargeBarRef}
-      />
+      {appMode === "track_builder" && (
+        <CourseBuilder setAppMode={setAppMode} />
+      )}
+
+      {/* Flight Telemetry HUD — suppressed in pure space overview dev mode for a clean minimal view of the full globe */}
+      {appMode !== "globe_view" && (
+        <FlightHUD
+          appMode={appMode}
+          setAppMode={setAppMode}
+          countdownText={countdownText}
+          showVictoryCard={showVictoryCard}
+          finalLapTimes={finalLapTimes}
+          bestLapTime={bestLapTime}
+          isNewRecord={isNewRecord}
+          handleRestart={handleRestart}
+          formatMsToTime={formatMsToTime}
+          fastestLapIndex={fastestLapIndex}
+          parseTimeToMs={parseTimeToMs}
+          lapTextRef={lapTextRef}
+          timeTextRef={timeTextRef}
+          bestTimeTextRef={bestTimeTextRef}
+          playerDotRef={playerDotRef}
+          speedTextRef={speedTextRef}
+          boostBarRef={boostBarRef}
+          boostIndicatorRef={boostIndicatorRef}
+          chargeBarRef={chargeBarRef}
+        />
+      )}
 
       {/* Cozy Globe HUD overlay */}
       <GlobeHUD
@@ -3491,7 +4877,33 @@ export default function App() {
         showDiscoverBanner={showDiscoverBanner}
         currentDiscoverMessage={currentDiscoverMessage}
         globeRingsCollectedRef={globeRingsCollectedRef}
+        timeAttackActive={timeAttackActive}
+        timeAttackTimeLeft={timeAttackTimeLeft}
+        timeAttackGatesCleared={timeAttackGatesCleared}
+        timeAttackTotalGates={timeAttackTotalGates}
+        timeAttackMultiplier={timeAttackMultiplier}
       />
+
+      {/* Dev tool: minimalistic always-visible button for space overview / planet design view (full 360, no ship loc) */}
+      {(appMode === "globe" || appMode === "globe_view") && (
+        <button
+          onClick={() => {
+            if (appMode === "globe_view") {
+              (window as any)._skipGlobeReset = true;
+              setAppMode("globe");
+              (window as any)._modeSwitch = "globe";
+            } else {
+              setAppMode("globe_view");
+              (window as any)._modeSwitch = "globe_view";
+              (window as any)._appMode = "globe_view";
+            }
+          }}
+          className="absolute top-4 right-4 z-[70] px-2.5 py-1 text-[10px] font-mono tracking-[1.5px] bg-black/55 hover:bg-black/75 active:bg-black/90 border border-white/15 text-white/75 hover:text-white rounded-full backdrop-blur-md shadow-lg pointer-events-auto select-none transition-all flex items-center gap-1"
+          title={appMode === "globe_view" ? "Return to vehicle on the surface" : "Enter space overview mode — rotate & inspect the full globe (dev tool)"}
+        >
+          {appMode === "globe_view" ? "⬅ GROUND" : "🌌 OVERVIEW"}
+        </button>
+      )}
 
       {showHangarGallery && (
         <HangarGallery

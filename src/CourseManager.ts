@@ -267,7 +267,7 @@ class PalmTreeLODSystem implements TrackSubsystem {
   private activeMatrices: THREE.Matrix4[][] = [];
   private gltfLoaded = false;
 
-  private invisibleMatrix = new THREE.Matrix4().makeTranslation(0, -9999, 0);
+  private invisibleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
   private fallbackPlayerPos = new THREE.Vector3(0, 0, 0);
 
   constructor(
@@ -297,7 +297,7 @@ class PalmTreeLODSystem implements TrackSubsystem {
 
     const gltfLoader = new GLTFLoader();
     gltfLoader.load(
-      "/Meshy_AI_Starlit_Neon_Palm_Tre_0607091706_texture.glb",
+      "/Meshy_AI_Starlit_Neon_Palm_Tre_0614142045_texture.glb",
       (gltf) => {
         if ((parent as any)._palmTreeSession !== sessionToken) return;
 
@@ -332,9 +332,9 @@ class PalmTreeLODSystem implements TrackSubsystem {
             matClone,
             21 // Total number of palm trees along the course
           );
-          instMesh.castShadow = true;
+          instMesh.castShadow = false;
           instMesh.receiveShadow = true;
-          instMesh.frustumCulled = false;
+          instMesh.frustumCulled = true;
 
           parent.add(instMesh);
           return instMesh;
@@ -377,9 +377,8 @@ class PalmTreeLODSystem implements TrackSubsystem {
           this.activeMatrices[i] = instanceMeshes.map((m) => m.matrixWorld.clone());
 
           // Initially render out of bounds until player is nearby
-          const invisibleMatrix = new THREE.Matrix4().makeTranslation(0, -9999, 0);
           this.instancedMeshes.forEach((instMesh) => {
-            instMesh.setMatrixAt(i, invisibleMatrix);
+            instMesh.setMatrixAt(i, this.invisibleMatrix);
           });
         }
 
@@ -434,6 +433,9 @@ class PalmTreeLODSystem implements TrackSubsystem {
     if (this.gltfLoaded) {
       for (let m = 0; m < this.instancedMeshes.length; m++) {
         this.instancedMeshes[m].instanceMatrix.needsUpdate = true;
+        if (this.instancedMeshes[m].computeBoundingSphere) {
+          this.instancedMeshes[m].computeBoundingSphere();
+        }
       }
     }
   }
@@ -937,13 +939,14 @@ export function buildOvalTrack(trackGroup: THREE.Group): TrackBuildResult {
     treePositions,
     treeRotations,
     treeScales,
-    proceduralTrees
+    proceduralTrees,
+    true
   );
 
   const parallaxMountainsSystem = new ParallaxMountainsSystem();
   const holographicCitySystem = new HolographicCitySystem();
   const underTrackNeonSystem = new UnderTrackNeonSystem(trackCurve, halfWidth);
-  const hoveringPolyhedraSystem = new HoveringPolyhedraSystem(trackCurve, halfWidth);
+  const hoveringPolyhedraSystem = new HoveringPolyhedraSystem(trackCurve, halfWidth, true);
   const neonSpectatorGatesSystem = new NeonSpectatorGatesSystem(trackCurve, halfWidth, true);
 
   return {
@@ -2699,423 +2702,884 @@ export function buildPlannerTrack(trackGroup: THREE.Group): TrackBuildResult {
   };
 }
 
-export function buildCustomTrack(trackGroup: THREE.Group): TrackBuildResult {
-  // The custom track points provided by the user
-  const customPoints = [
-    new THREE.Vector3(0, 2, 0),
-    new THREE.Vector3(0, 2, -24),
-    new THREE.Vector3(0, 2, -58),
-    new THREE.Vector3(0, 2, -100),
-    new THREE.Vector3(0, 2, -148),
-    new THREE.Vector3(0, 2, -206),
-    new THREE.Vector3(26, 2, -254),
-    new THREE.Vector3(64, 2, -254),
-    new THREE.Vector3(92, 2, -214),
-    new THREE.Vector3(94, 2, -172),
-    new THREE.Vector3(92, 2, -148),
-    new THREE.Vector3(82, 3, -105),
-    new THREE.Vector3(68, 7, -62),
-    new THREE.Vector3(50, 14, -19), // rising
-    new THREE.Vector3(32, 24, 24), // elevated bridging point
-    new THREE.Vector3(16, 30, 70), // peak of bridge
-    new THREE.Vector3(16, 30, 96), // elevated bridge crossing
-    new THREE.Vector3(32, 24, 112), // elevated bridge crossing
-    new THREE.Vector3(64, 12, 108), // going down
-    new THREE.Vector3(82, 2, 82), // near bottom
-    new THREE.Vector3(96, 2, 52),
-    new THREE.Vector3(112, 2, 36),
-    new THREE.Vector3(144, 2, 40),
-    new THREE.Vector3(156, 2, 62),
-    new THREE.Vector3(146, 2, 92),
-    new THREE.Vector3(130, 2, 122),
-    new THREE.Vector3(114, 2, 152),
-    new THREE.Vector3(98, 2, 180),
-    new THREE.Vector3(82, 2, 210),
-    new THREE.Vector3(66, 2, 238),
-    new THREE.Vector3(52, 2, 268),
-    new THREE.Vector3(36, 2, 298),
-    new THREE.Vector3(28, 2, 338),
-    new THREE.Vector3(40, 2, 376),
-    new THREE.Vector3(64, 2, 400),
-    new THREE.Vector3(96, 2, 410),
-    new THREE.Vector3(128, 2, 408),
-    new THREE.Vector3(158, 2, 392),
-    new THREE.Vector3(178, 2, 366),
-    new THREE.Vector3(188, 2, 334),
-    new THREE.Vector3(186, 2, 302),
-    new THREE.Vector3(170, 2, 272),
-    new THREE.Vector3(150, 10, 246),
-    new THREE.Vector3(124, 22, 214),
-    new THREE.Vector3(98, 28, 182), // pass OVER bridge
-    new THREE.Vector3(66, 22, 154),
-    new THREE.Vector3(40, 4, 134),
-    new THREE.Vector3(12, 2, 114),
-    new THREE.Vector3(-14, 2, 94),
-    new THREE.Vector3(-20, 2, 62),
-    new THREE.Vector3(2, 2, 40),
-    new THREE.Vector3(8, 2, 20),
+function isRoadCellType(type: string): boolean {
+  return (
+    type === "|" ||
+    type === "-" ||
+    type === "TL" ||
+    type === "TR" ||
+    type === "BL" ||
+    type === "BR" ||
+    type === "SF" ||
+    type === "BP" ||
+    type === "ROAD_BRIDGE" ||
+    type === "ROAD_BUMP" ||
+    type.endsWith("_P")
+  );
+}
+
+function getAllowedDirections(type: string): { dr: number; dc: number }[] {
+  const diagonals = [
+    { dr: -1, dc: -1 },
+    { dr: -1, dc: 1 },
+    { dr: 1, dc: -1 },
+    { dr: 1, dc: 1 }
   ];
 
-  const curve = new THREE.CatmullRomCurve3(customPoints, true);
-  const segments = 400;
-  const trackWidth = 34; // Nice wide track
-  const halfWidth = trackWidth / 2;
-  const wallHeight = 8.0; // Raise walls to prevent jumping/flying over barriers
-  const spacedPoints = curve.getSpacedPoints(segments);
+  if (type === "|") {
+    return [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, ...diagonals];
+  }
+  if (type === "-") {
+    return [{ dr: 0, dc: -1 }, { dr: 0, dc: 1 }, ...diagonals];
+  }
+  if (type === "TL") {
+    return [{ dr: 1, dc: 0 }, { dr: 0, dc: 1 }, ...diagonals]; // South, East
+  }
+  if (type === "TR") {
+    return [{ dr: 1, dc: 0 }, { dr: 0, dc: -1 }, ...diagonals]; // South, West
+  }
+  if (type === "BL") {
+    return [{ dr: -1, dc: 0 }, { dr: 0, dc: 1 }, ...diagonals]; // North, East
+  }
+  if (type === "BR") {
+    return [{ dr: -1, dc: 0 }, { dr: 0, dc: -1 }, ...diagonals]; // North, West
+  }
+  if (type === "SF" || type === "BP" || type === "ROAD_BRIDGE" || type === "ROAD_BUMP") {
+    return [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }, ...diagonals];
+  }
+  if (type.endsWith("_P")) {
+    const parts = type.split("_");
+    const baseType = parts[0] + "_" + parts[1];
+    const dr = parseInt(parts[2], 10);
+    const dc = parseInt(parts[3], 10);
 
-  const geometry = new THREE.BufferGeometry();
+    if (baseType === "L2_TL") {
+      if (dr === 1 && dc === 0) return [{ dr: 1, dc: 0 }, { dr: -1, dc: 1 }];
+      if (dr === 0 && dc === 1) return [{ dr: 0, dc: 1 }, { dr: 1, dc: -1 }];
+    }
+    if (baseType === "L2_TR") {
+      if (dr === 1 && dc === 1) return [{ dr: 1, dc: 0 }, { dr: -1, dc: -1 }];
+      if (dr === 0 && dc === 0) return [{ dr: 0, dc: -1 }, { dr: 1, dc: 1 }];
+    }
+    if (baseType === "L2_BL") {
+      if (dr === 0 && dc === 0) return [{ dr: -1, dc: 0 }, { dr: 1, dc: 1 }];
+      if (dr === 1 && dc === 1) return [{ dr: 0, dc: 1 }, { dr: -1, dc: -1 }];
+    }
+    if (baseType === "L2_BR") {
+      if (dr === 0 && dc === 1) return [{ dr: -1, dc: 0 }, { dr: 1, dc: -1 }];
+      if (dr === 1 && dc === 0) return [{ dr: 0, dc: -1 }, { dr: -1, dc: 1 }];
+    }
 
-  const vertices = new Float32Array((segments + 1) * 2 * 3);
-  const uvs = new Float32Array((segments + 1) * 2 * 2);
-  const indices = [];
+    if (baseType === "L3_TL") {
+      if (dr === 2 && dc === 0) return [{ dr: 1, dc: 0 }, { dr: -1, dc: 1 }];
+      if (dr === 1 && dc === 1) return [{ dr: 1, dc: -1 }, { dr: -1, dc: 1 }];
+      if (dr === 0 && dc === 2) return [{ dr: 0, dc: 1 }, { dr: 1, dc: -1 }];
+    }
+    if (baseType === "L3_TR") {
+      if (dr === 2 && dc === 2) return [{ dr: 1, dc: 0 }, { dr: -1, dc: -1 }];
+      if (dr === 1 && dc === 1) return [{ dr: 1, dc: 1 }, { dr: -1, dc: -1 }];
+      if (dr === 0 && dc === 0) return [{ dr: 0, dc: -1 }, { dr: 1, dc: 1 }];
+    }
+    if (baseType === "L3_BL") {
+      if (dr === 0 && dc === 0) return [{ dr: -1, dc: 0 }, { dr: 1, dc: 1 }];
+      if (dr === 1 && dc === 1) return [{ dr: -1, dc: -1 }, { dr: 1, dc: 1 }];
+      if (dr === 2 && dc === 2) return [{ dr: 0, dc: 1 }, { dr: -1, dc: -1 }];
+    }
+    if (baseType === "L3_BR") {
+      if (dr === 0 && dc === 2) return [{ dr: -1, dc: 0 }, { dr: 1, dc: -1 }];
+      if (dr === 1 && dc === 1) return [{ dr: -1, dc: 1 }, { dr: 1, dc: -1 }];
+      if (dr === 2 && dc === 0) return [{ dr: 0, dc: -1 }, { dr: -1, dc: 1 }];
+    }
+  }
+  return [];
+}
 
-  const wallVerts = new Float32Array((segments + 1) * 4 * 3); // inner/outer verts for both walls
-  const wallIndices = [];
+function canConnect(r1: number, c1: number, r2: number, c2: number, grid: string[][]): boolean {
+  const type1 = grid[r1]?.[c1];
+  const type2 = grid[r2]?.[c2];
+  if (!type1 || !type2) return false;
 
-  // 1. Precalculate and smooth bank angles
-  const rawBankAngles: number[] = [];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const tangent = curve.getTangentAt(Math.min(t, 0.9999));
-    const tNext = Math.min(t + 0.02, 0.9999);
-    const tangentNext = curve.getTangentAt(tNext);
-    const crossY = tangent.z * tangentNext.x - tangent.x * tangentNext.z;
-    rawBankAngles.push(crossY * 8);
+  const dr = r2 - r1;
+  const dc = c2 - c1;
+
+  const dir1 = getAllowedDirections(type1);
+  const dir2 = getAllowedDirections(type2);
+
+  const hasDir1 = dir1.some(d => d.dr === dr && d.dc === dc);
+  const hasDir2 = dir2.some(d => d.dr === -dr && d.dc === -dc);
+
+  return hasDir1 && hasDir2;
+}
+
+export function tracePathFromGrid(grid: string[][]): { r: number; c: number }[] {
+  const rows = grid.length;
+  if (rows === 0) return [];
+  const cols = grid[0].length;
+
+  let start: { r: number; c: number } | null = null;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] === "SF") {
+        start = { r, c };
+        break;
+      }
+    }
+    if (start) break;
   }
 
-  // Pass 1: Moving average
-  let pass1BankAngles: number[] = [];
-  const smoothWindow1 = 30;
-  for (let i = 0; i <= segments; i++) {
-    let sum = 0;
-    for (let j = -smoothWindow1; j <= smoothWindow1; j++) {
-      let idx = i + j;
-      if (idx < 0) idx += segments;
-      if (idx > segments) idx -= segments;
-      sum += rawBankAngles[idx];
+  if (!start) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (isRoadCellType(grid[r][c])) {
+          start = { r, c };
+          break;
+        }
+      }
+      if (start) break;
     }
-    pass1BankAngles.push(sum / (smoothWindow1 * 2 + 1));
   }
 
-  // Pass 2: Moving average
-  const smoothedBankAngles: number[] = [];
-  const smoothWindow2 = 20;
-  const maxBank = Math.PI / 6; // 30 degrees Max Bank
-  for (let i = 0; i <= segments; i++) {
-    let sum = 0;
-    for (let j = -smoothWindow2; j <= smoothWindow2; j++) {
-      let idx = i + j;
-      if (idx < 0) idx += segments;
-      if (idx > segments) idx -= segments;
-      sum += pass1BankAngles[idx];
-    }
-    let avg = sum / (smoothWindow2 * 2 + 1);
+  if (!start) return [];
 
-    // Deadzone for completely flat straights
-    if (Math.abs(avg) < 0.03) {
-      avg = 0;
+  const path: { r: number; c: number }[] = [start];
+  const visited = new Set<string>();
+  visited.add(`${start.r},${start.c}`);
+
+  let curr = start;
+  let finished = false;
+
+  while (!finished) {
+    const neighbors = [
+      { r: curr.r - 1, c: curr.c },
+      { r: curr.r + 1, c: curr.c },
+      { r: curr.r, c: curr.c - 1 },
+      { r: curr.r, c: curr.c + 1 },
+      { r: curr.r - 1, c: curr.c - 1 },
+      { r: curr.r - 1, c: curr.c + 1 },
+      { r: curr.r + 1, c: curr.c - 1 },
+      { r: curr.r + 1, c: curr.c + 1 },
+    ];
+
+    let nextCell: { r: number; c: number } | null = null;
+
+    for (const n of neighbors) {
+      if (n.r >= 0 && n.r < rows && n.c >= 0 && n.c < cols) {
+        if (canConnect(curr.r, curr.c, n.r, n.c, grid)) {
+          if (n.r === start.r && n.c === start.c && path.length > 2) {
+            finished = true;
+            break;
+          }
+          if (!visited.has(`${n.r},${n.c}`)) {
+            nextCell = n;
+            break;
+          }
+        }
+      }
+    }
+
+    if (finished) break;
+
+    if (nextCell) {
+      path.push(nextCell);
+      visited.add(`${nextCell.r},${nextCell.c}`);
+      curr = nextCell;
     } else {
-      avg = Math.sign(avg) * (Math.abs(avg) - 0.03);
+      finished = true;
     }
-    smoothedBankAngles.push(Math.max(-maxBank, Math.min(maxBank, avg)));
   }
+
+  return path;
+}
+
+function createFuturisticGridTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d")!;
+
+  // Dark background
+  ctx.fillStyle = "#020205";
+  ctx.fillRect(0, 0, 512, 512);
+
+  // Subtle sci-fi radial gradient
+  const grad = ctx.createRadialGradient(256, 256, 50, 256, 256, 256);
+  grad.addColorStop(0, "#0a0712");
+  grad.addColorStop(1, "#020205");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 512, 512);
+
+  // Draw grid lines
+  ctx.strokeStyle = "rgba(0, 240, 255, 0.15)";
+  ctx.lineWidth = 2;
+  const step = 32;
+  for (let x = 0; x <= 512; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 512);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, x);
+    ctx.lineTo(512, x);
+    ctx.stroke();
+  }
+
+  // Draw crosshairs at grid intersections for high-tech look
+  ctx.fillStyle = "rgba(255, 0, 136, 0.4)";
+  for (let x = step; x < 512; x += step * 2) {
+    for (let y = step; y < 512; y += step * 2) {
+      ctx.fillRect(x - 2, y - 2, 4, 4);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8); // Tile the grid nicely across the 240x240 plane
+  return texture;
+}
+
+export function buildCustomTrack(trackGroup: THREE.Group): TrackBuildResult {
+  const CELL_SIZE = 15.0;
+
+  // Retrieve user grid from window or localStorage, or fall back to Mario Circuit 1 template
+  let grid: string[][] = (window as any)._customGrid;
+  if (!grid) {
+    const saved = localStorage.getItem("star_riders_custom_grid");
+    if (saved) {
+      try {
+        grid = JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved custom grid:", e);
+      }
+    }
+  }
+  if (!grid) {
+    grid = Array(16).fill(null).map(() => Array(16).fill("."));
+    
+    // Left boundary
+    grid[2][1] = "TL";
+    grid[3][1] = "|"; grid[4][1] = "|"; grid[5][1] = "|"; grid[6][1] = "|";
+    grid[7][1] = "|"; grid[8][1] = "|"; grid[9][1] = "|"; grid[10][1] = "|";
+    grid[11][1] = "|"; grid[12][1] = "|"; grid[13][1] = "|";
+    grid[14][1] = "BL";
+
+    // Top staircase
+    grid[2][2] = "-"; grid[2][3] = "-"; grid[2][4] = "-";
+    grid[3][5] = "-"; grid[3][6] = "-"; grid[3][7] = "-";
+    grid[4][8] = "-"; grid[4][9] = "-"; grid[4][10] = "-";
+    grid[5][11] = "-"; grid[5][12] = "-"; grid[5][13] = "TR";
+
+    // Right boundary with Start/Finish and Boost Pads
+    grid[6][13] = "|"; grid[7][13] = "|";
+    grid[8][13] = "BP"; // Boost Pad
+    grid[9][13] = "|";
+    grid[10][13] = "SF"; // Start/Finish
+    grid[11][13] = "|";
+    grid[12][13] = "BP"; // Boost Pad
+    grid[13][13] = "|"; grid[14][13] = "|";
+    grid[15][13] = "BR";
+
+    // Bottom-right U-turn
+    grid[15][12] = "-";
+    grid[15][11] = "BL";
+
+    // Inner peak right diagonal
+    grid[14][11] = "|"; grid[13][11] = "|"; grid[12][11] = "|"; grid[11][11] = "|";
+    grid[10][10] = "|";
+    grid[9][9] = "|";
+    grid[8][9] = "TR";
+
+    // Inner peak left diagonal
+    grid[8][8] = "-";
+    grid[9][7] = "-";
+    grid[10][6] = "-";
+    grid[11][5] = "-";
+    grid[12][4] = "-";
+    grid[13][3] = "-";
+    grid[14][2] = "-";
+
+    (window as any)._customGrid = grid;
+  }
+
+  const path = tracePathFromGrid(grid);
+
+  // If path is empty, return a simple dummy straight track so we don't crash
+  if (path.length < 2) {
+    const dummyPoints = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 50)];
+    const curve = new THREE.CatmullRomCurve3(dummyPoints, true);
+    (window as any)._customStartPos = new THREE.Vector3(0, 0, 0);
+    (window as any)._customStartHeading = 0;
+    return {
+      boostSystem: new BoostPadSystem([]),
+      curve,
+    };
+  }
+
+  const customPoints = path.map(p => {
+    const x = (p.c - 7.5) * CELL_SIZE;
+    const z = (p.r - 7.5) * CELL_SIZE;
+    return new THREE.Vector3(x, 0, z);
+  });
+
+  const trackCurve = new THREE.CatmullRomCurve3(customPoints, true);
+
+  const segments = 400;
+  const spacedPoints = trackCurve.getSpacedPoints(segments);
+  const trackWidth = 15.0; // Matches CELL_SIZE
+  const halfWidth = trackWidth / 2;
+
+  // Set start position at the first cell (start of the loop, normally SF)
+  const startCell = path[0];
+  const startX = (startCell.c - 7.5) * CELL_SIZE;
+  const startZ = (startCell.r - 7.5) * CELL_SIZE;
+  (window as any)._customStartPos = new THREE.Vector3(startX, 0, startZ);
+
+  // Compute start heading from first path segment
+  const nextCell = path[1];
+  const dx = nextCell.c - startCell.c;
+  const dz = nextCell.r - startCell.r;
+  (window as any)._customStartHeading = Math.atan2(dx, dz);
+
+  // Generate invisible backing physics collision ribbon geometry
+  const trackGeo = new THREE.BufferGeometry();
+  const roadVertices = new Float32Array((segments + 1) * 2 * 3);
+  const roadUvs = new Float32Array((segments + 1) * 2 * 2);
+  const roadIndices = [];
 
   for (let i = 0; i <= segments; i++) {
     const index = i === segments ? 0 : i;
     const p = spacedPoints[index];
     const t = i / segments;
-    const tangent = curve.getTangentAt(Math.min(t, 0.9999));
+    const tangent = trackCurve.getTangentAt(Math.min(t, 0.9999));
+    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
 
-    let bankAngle = smoothedBankAngles[i];
+    const vIn = p.clone().add(normal.clone().multiplyScalar(-halfWidth));
+    const vOut = p.clone().add(normal.clone().multiplyScalar(halfWidth));
 
-    const up = new THREE.Vector3(0, 1, 0);
-    const unbankedNormal = new THREE.Vector3()
-      .crossVectors(tangent, up)
-      .normalize();
-    const realUp = new THREE.Vector3()
-      .crossVectors(unbankedNormal, tangent)
-      .normalize();
+    roadVertices[i * 6] = vIn.x;
+    roadVertices[i * 6 + 1] = vIn.y;
+    roadVertices[i * 6 + 2] = vIn.z;
+    roadVertices[i * 6 + 3] = vOut.x;
+    roadVertices[i * 6 + 4] = vOut.y;
+    roadVertices[i * 6 + 5] = vOut.z;
 
-    // Rotate the vectors by bank angle
-    const normal = unbankedNormal.clone().applyAxisAngle(tangent, -bankAngle);
-    const surfaceUp = realUp.clone().applyAxisAngle(tangent, -bankAngle);
-
-    const v1 = new THREE.Vector3()
-      .copy(p)
-      .add(normal.clone().multiplyScalar(halfWidth));
-    const v2 = new THREE.Vector3()
-      .copy(p)
-      .add(normal.clone().multiplyScalar(-halfWidth));
-
-    vertices[i * 6] = v1.x;
-    vertices[i * 6 + 1] = v1.y;
-    vertices[i * 6 + 2] = v1.z;
-    vertices[i * 6 + 3] = v2.x;
-    vertices[i * 6 + 4] = v2.y;
-    vertices[i * 6 + 5] = v2.z;
-
-    uvs[i * 4] = 0;
-    uvs[i * 4 + 1] = t * 20;
-    uvs[i * 4 + 2] = 1;
-    uvs[i * 4 + 3] = t * 20;
+    roadUvs[i * 4] = 0;
+    roadUvs[i * 4 + 1] = t;
+    roadUvs[i * 4 + 2] = 1;
+    roadUvs[i * 4 + 3] = t;
 
     if (i < segments) {
       const a = i * 2;
       const b = i * 2 + 1;
       const c = (i + 1) * 2;
       const d = (i + 1) * 2 + 1;
-      indices.push(a, b, c);
-      indices.push(b, d, c);
-    }
-
-    // Walls (perpendicular to banked track surface)
-    const w1 = v1.clone().add(surfaceUp.clone().multiplyScalar(wallHeight));
-    const w2 = v2.clone().add(surfaceUp.clone().multiplyScalar(wallHeight));
-
-    wallVerts[i * 12] = v1.x;
-    wallVerts[i * 12 + 1] = v1.y;
-    wallVerts[i * 12 + 2] = v1.z;
-
-    wallVerts[i * 12 + 3] = w1.x;
-    wallVerts[i * 12 + 4] = w1.y;
-    wallVerts[i * 12 + 5] = w1.z;
-
-    wallVerts[i * 12 + 6] = v2.x;
-    wallVerts[i * 12 + 7] = v2.y;
-    wallVerts[i * 12 + 8] = v2.z;
-
-    wallVerts[i * 12 + 9] = w2.x;
-    wallVerts[i * 12 + 10] = w2.y;
-    wallVerts[i * 12 + 11] = w2.z;
-
-    if (i < segments) {
-      const a1 = i * 4;
-      const b1 = i * 4 + 1;
-      const c1 = (i + 1) * 4;
-      const d1 = (i + 1) * 4 + 1;
-
-      const a2 = i * 4 + 2;
-      const b2 = i * 4 + 3;
-      const c2 = (i + 1) * 4 + 2;
-      const d2 = (i + 1) * 4 + 3;
-
-      // Right wall
-      wallIndices.push(a1, b1, c1);
-      wallIndices.push(b1, d1, c1);
-
-      // Left wall
-      wallIndices.push(a2, c2, b2);
-      wallIndices.push(b2, c2, d2);
+      roadIndices.push(a, b, c);
+      roadIndices.push(b, d, c);
     }
   }
 
-  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+  trackGeo.setAttribute("position", new THREE.BufferAttribute(roadVertices, 3));
+  trackGeo.setAttribute("uv", new THREE.BufferAttribute(roadUvs, 2));
+  trackGeo.setIndex(roadIndices);
+  trackGeo.computeVertexNormals();
 
-  // Split track into 3 distinct colour-coded zones
-  const s1 = Math.floor(segments / 3);
-  const s2 = Math.floor(segments / 3);
-  const s3 = segments - s1 - s2;
-
-  // Track groups (6 indices per segment)
-  geometry.addGroup(0, s1 * 6, 0); // Zone 1: Jade Valley
-  geometry.addGroup(s1 * 6, s2 * 6, 1); // Zone 2: Crimson Bridge
-  geometry.addGroup((s1 + s2) * 6, s3 * 6, 2); // Zone 3: Azure Depths
-
-  // Walls groups (12 indices per segment)
-  const wallGeometry = new THREE.BufferGeometry();
-  wallGeometry.setAttribute(
-    "position",
-    new THREE.BufferAttribute(wallVerts, 3),
-  );
-  wallGeometry.setIndex(wallIndices);
-  wallGeometry.computeVertexNormals();
-
-  wallGeometry.addGroup(0, s1 * 12, 0);
-  wallGeometry.addGroup(s1 * 12, s2 * 12, 1);
-  wallGeometry.addGroup((s1 + s2) * 12, s3 * 12, 2);
-
-  const matZone1 = new THREE.MeshPhongMaterial({
-    color: 0x8822cc,
-    emissive: 0x220055,
-    transparent: true,
-    opacity: 0.7,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
-  const matZone2 = new THREE.MeshPhongMaterial({
-    color: 0x22ccff,
-    emissive: 0x003355,
-    transparent: true,
-    opacity: 0.7,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
-  const matZone3 = new THREE.MeshPhongMaterial({
-    color: 0x222288,
-    emissive: 0x000033,
-    transparent: true,
-    opacity: 0.7,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
-  const trackMesh = new THREE.Mesh(geometry, [matZone1, matZone2, matZone3]);
+  const trackMat = new THREE.MeshBasicMaterial({ visible: false });
+  const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+  trackMesh.position.y = -0.5;
   trackMesh.userData.isDriveable = true;
   trackGroup.add(trackMesh);
 
-  const wallMatZone1 = new THREE.MeshBasicMaterial({
-    color: 0xff44ff,
-    wireframe: true,
-    transparent: true,
-    opacity: 0.5,
-  });
-  const wallMatZone2 = new THREE.MeshBasicMaterial({
-    color: 0x44ffff,
-    wireframe: true,
-    transparent: true,
-    opacity: 0.5,
-  });
-  const wallMatZone3 = new THREE.MeshBasicMaterial({
-    color: 0x4444ff,
-    wireframe: true,
-    transparent: true,
-    opacity: 0.5,
-  });
-  const wallMesh = new THREE.Mesh(wallGeometry, [
-    wallMatZone1,
-    wallMatZone2,
-    wallMatZone3,
-  ]);
-  wallMesh.userData.isWall = true;
-  trackGroup.add(wallMesh);
+  // --- Load and Place Modular 3D Road Tiles ---
+  const roadLoader = new GLTFLoader();
+  const roadTilesGroup = new THREE.Group();
+  trackGroup.add(roadTilesGroup);
 
-  // Glowing arches along track
-  for (let i = 0; i < segments; i += 20) {
-    const p = spacedPoints[i];
-    const tangent = curve.getTangentAt(i / segments);
+  let straightModel: THREE.Object3D | null = null;
+  let cornerModel: THREE.Object3D | null = null;
+  let startModel: THREE.Object3D | null = null;
+  let arrowModel: THREE.Object3D | null = null;
+  let bridgeModel: THREE.Object3D | null = null;
+  let bumpModel: THREE.Object3D | null = null;
+  let largeCornerModel: THREE.Object3D | null = null;
+  let largerCornerModel: THREE.Object3D | null = null;
+  let treeModel: THREE.Object3D | null = null;
+  let billboardModel: THREE.Object3D | null = null;
+  let grandstandModel: THREE.Object3D | null = null;
+  let lightModel: THREE.Object3D | null = null;
+  let pylonModel: THREE.Object3D | null = null;
+  let decorBuilt = false;
 
-    const archGeo = new THREE.TorusGeometry(trackWidth, 0.4, 8, 32, Math.PI);
-    const archMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(
-        `hsl(${Math.floor((i / segments) * 360)}, 100%, 70%)`,
-      ),
-      side: THREE.DoubleSide,
+  const createCenteredModelWrapper = (originalModel: THREE.Object3D, offsetX: number, offsetZ: number) => {
+    const parentGroup = new THREE.Group();
+    const modelClone = originalModel.clone();
+    modelClone.position.set(offsetX, 0, offsetZ);
+    parentGroup.add(modelClone);
+    return parentGroup;
+  };
+
+  const buildGridTiles = () => {
+    if (!straightModel || !cornerModel || !startModel || !arrowModel || !bridgeModel || !bumpModel || !largeCornerModel || !largerCornerModel) return;
+
+    const placedMultiTiles = new Set<string>();
+
+    const pathLen = path.length;
+    for (let i = 0; i < pathLen; i++) {
+      const prev = path[(i - 1 + pathLen) % pathLen];
+      const curr = path[i];
+      const next = path[(i + 1) % pathLen];
+
+      const dxIn = curr.c - prev.c;
+      const dzIn = curr.r - prev.r;
+      const dxOut = next.c - curr.c;
+      const dzOut = next.r - curr.r;
+
+      let posX = (curr.c - 7.5) * CELL_SIZE;
+      let posZ = (curr.r - 7.5) * CELL_SIZE;
+
+      let tileInstance: THREE.Group | null = null;
+      let rotY = 0;
+      let scaleX = CELL_SIZE;
+      let scaleZ = CELL_SIZE;
+
+      const cellType = grid[curr.r] ? grid[curr.r][curr.c] : ".";
+      const isMultiTile = cellType.startsWith("L2_") || cellType.startsWith("L3_");
+      const isCorner = !isMultiTile && (dxIn * dxOut + dzIn * dzOut === 0) && (dxIn !== 0 || dzIn !== 0) && (dxOut !== 0 || dzOut !== 0);
+
+      if (isCorner) {
+        tileInstance = createCenteredModelWrapper(cornerModel, -0.5, 0.5);
+
+        const dx1 = prev.c - curr.c;
+        const dz1 = prev.r - curr.r;
+        const dx2 = next.c - curr.c;
+        const dz2 = next.r - curr.r;
+
+        // TL: connects South (dz=1) and East (dx=1)
+        if ((dx1 === 1 || dx2 === 1) && (dz1 === 1 || dz2 === 1)) {
+          rotY = 0;
+        }
+        // TR: connects South (dz=1) and West (dx=-1)
+        else if ((dx1 === -1 || dx2 === -1) && (dz1 === 1 || dz2 === 1)) {
+          rotY = Math.PI / 2;
+        }
+        // BR: connects North (dz=-1) and West (dx=-1)
+        else if ((dx1 === -1 || dx2 === -1) && (dz1 === -1 || dz2 === -1)) {
+          rotY = Math.PI;
+        }
+        // BL: connects North (dz=-1) and East (dx=1)
+        else if ((dx1 === 1 || dx2 === 1) && (dz1 === -1 || dz2 === -1)) {
+          rotY = 3 * Math.PI / 2;
+        }
+      } else if (isMultiTile) {
+        const parts = cellType.split("_");
+        const orientation = parts[1];
+        const rOffset = parseInt(parts[2], 10);
+        const cOffset = parseInt(parts[3], 10);
+        const anchorR = curr.r - rOffset;
+        const anchorC = curr.c - cOffset;
+        const anchorId = `${anchorR},${anchorC}`;
+
+        if (placedMultiTiles.has(anchorId)) {
+          continue;
+        }
+        placedMultiTiles.add(anchorId);
+
+        const isL3 = cellType.startsWith("L3_");
+        const size = isL3 ? 3 : 2;
+        const model = isL3 ? largerCornerModel : largeCornerModel;
+        const offsetVal = isL3 ? -1.5 : -1.0;
+
+        tileInstance = createCenteredModelWrapper(model, offsetVal, -offsetVal);
+        posX = (anchorC + (size - 1) / 2 - 7.5) * CELL_SIZE;
+        posZ = (anchorR + (size - 1) / 2 - 7.5) * CELL_SIZE;
+
+        if (orientation === "TL") rotY = 0;
+        else if (orientation === "TR") rotY = Math.PI / 2;
+        else if (orientation === "BR") rotY = Math.PI;
+        else if (orientation === "BL") rotY = 3 * Math.PI / 2;
+
+        scaleX = CELL_SIZE;
+        scaleZ = CELL_SIZE;
+      } else {
+        if (cellType === "SF") {
+          tileInstance = createCenteredModelWrapper(startModel, -0.5, 0.5);
+        } else if (cellType === "BP") {
+          tileInstance = createCenteredModelWrapper(arrowModel, -0.5, 0.5);
+        } else if (cellType === "ROAD_BRIDGE") {
+          tileInstance = createCenteredModelWrapper(bridgeModel, -0.5, 0.5);
+        } else if (cellType === "ROAD_BUMP") {
+          tileInstance = createCenteredModelWrapper(bumpModel, -0.5, 0.5);
+        } else {
+          tileInstance = createCenteredModelWrapper(straightModel, -0.5, 0.5);
+        }
+
+        const dx = next.c - curr.c;
+        const dz = next.r - curr.r;
+        rotY = Math.atan2(dx, dz);
+
+        const isDiagonal = (dx !== 0 && dz !== 0);
+        if (isDiagonal) {
+          const lengthScale = Math.sqrt(dx * dx + dz * dz) * CELL_SIZE;
+          scaleX = CELL_SIZE;
+          scaleZ = lengthScale;
+        } else {
+          scaleX = CELL_SIZE;
+          scaleZ = CELL_SIZE;
+        }
+      }
+
+      if (tileInstance) {
+        tileInstance.position.set(posX, -0.49, posZ);
+        tileInstance.rotation.y = rotY;
+        tileInstance.scale.set(scaleX, 1.0, scaleZ);
+
+        tileInstance.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.userData.isDriveable = true;
+          }
+        });
+        roadTilesGroup.add(tileInstance);
+      }
+    }
+  };
+
+  const placeGridDecorations = () => {
+    if (decorBuilt) return;
+    if (!treeModel || !billboardModel || !grandstandModel || !lightModel || !pylonModel) return;
+    decorBuilt = true;
+
+    const decorGroup = new THREE.Group();
+    trackGroup.add(decorGroup);
+
+    const rows = grid.length;
+    const cols = grid[0].length;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cellType = grid[r][c];
+        // Only place decorations on empty cells (ignore road, SF, BP)
+        if (cellType === "." || cellType === "" || cellType === "|" || cellType === "-" || 
+            cellType === "TL" || cellType === "TR" || cellType === "BL" || cellType === "BR" || 
+            cellType === "SF" || cellType === "BP") {
+          continue;
+        }
+
+        const posX = (c - 7.5) * CELL_SIZE;
+        const posZ = (r - 7.5) * CELL_SIZE;
+
+        let instance: THREE.Object3D;
+        let rotY = Math.random() * Math.PI * 2;
+        let scale = 8.0;
+        let isPylon = false;
+        let isLight = false;
+
+        if (cellType === "DECOR_TREE") {
+          instance = treeModel.clone();
+          scale = 9.0;
+        } else if (cellType === "DECOR_BILLBOARD") {
+          instance = billboardModel.clone();
+          scale = 8.0;
+          // Rotate to face track center
+          const angleToCenter = Math.atan2(0 - posX, 0 - posZ);
+          rotY = angleToCenter + Math.PI;
+        } else if (cellType === "DECOR_GRANDSTAND") {
+          instance = grandstandModel.clone();
+          scale = 7.0;
+          // Rotate to face center
+          rotY = Math.atan2(0 - posX, 0 - posZ);
+        } else if (cellType === "DECOR_LIGHT") {
+          instance = lightModel.clone();
+          scale = 8.0;
+          rotY = Math.atan2(0 - posX, 0 - posZ);
+          isLight = true;
+        } else if (cellType === "OBSTACLE_PYLON") {
+          instance = pylonModel.clone();
+          scale = 10.0;
+          rotY = 0;
+          isPylon = true;
+        } else {
+          continue;
+        }
+
+        instance.position.set(posX, -0.49, posZ);
+        instance.rotation.y = rotY;
+        instance.scale.set(scale, scale, scale);
+
+        instance.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.receiveShadow = true;
+            child.castShadow = true;
+            if (isPylon) {
+              child.userData.isWall = true;
+            }
+          }
+        });
+
+        if (isLight) {
+          const pointLight = new THREE.PointLight(0x00f0ff, 1.2, 25.0);
+          pointLight.position.set(0, 8.0, 0);
+          instance.add(pointLight);
+        }
+
+        decorGroup.add(instance);
+      }
+    }
+  };
+
+  roadLoader.load("/roadStraight.glb", (gltf) => {
+    straightModel = gltf.scene;
+    straightModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
     });
-    const arch = new THREE.Mesh(archGeo, archMat);
-    arch.position.copy(p);
+    buildGridTiles();
+  });
 
-    // Create a rotation matrix
-    const up = new THREE.Vector3(0, 1, 0);
-    const normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
-    const upCross = new THREE.Vector3()
-      .crossVectors(normal, tangent)
-      .normalize();
-    const matrix = new THREE.Matrix4().makeBasis(normal, upCross, tangent);
-    arch.quaternion.setFromRotationMatrix(matrix);
-    trackGroup.add(arch);
-  }
+  roadLoader.load("/roadCornerSmall.glb", (gltf) => {
+    cornerModel = gltf.scene;
+    cornerModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
 
-  // Star particle field
-  const starGeo = new THREE.BufferGeometry();
-  const starCount = 5000;
-  const starPos = new Float32Array(starCount * 3);
-  const starCol = new Float32Array(starCount * 3);
+  roadLoader.load("/roadStart.glb", (gltf) => {
+    startModel = gltf.scene;
+    startModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
 
-  for (let i = 0; i < starCount; i++) {
-    starPos[i * 3] = (Math.random() - 0.5) * 800 + 85;
-    starPos[i * 3 + 1] = (Math.random() - 0.5) * 400 + 20;
-    starPos[i * 3 + 2] = (Math.random() - 0.5) * 1200 + 80;
+  roadLoader.load("/roadStraightArrow.glb", (gltf) => {
+    arrowModel = gltf.scene;
+    arrowModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
 
-    const r = Math.random();
-    if (r < 0.3) {
-      starCol[i * 3] = 0.5;
-      starCol[i * 3 + 1] = 0.2;
-      starCol[i * 3 + 2] = 1.0;
-    } else if (r < 0.6) {
-      starCol[i * 3] = 1.0;
-      starCol[i * 3 + 1] = 0.2;
-      starCol[i * 3 + 2] = 0.8;
-    } else {
-      starCol[i * 3] = 0.2;
-      starCol[i * 3 + 1] = 0.8;
-      starCol[i * 3 + 2] = 1.0;
+  roadLoader.load("/roadStraightBridge.glb", (gltf) => {
+    bridgeModel = gltf.scene;
+    bridgeModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadBump.glb", (gltf) => {
+    bumpModel = gltf.scene;
+    bumpModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadCornerLarge.glb", (gltf) => {
+    largeCornerModel = gltf.scene;
+    largeCornerModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadCornerLarger.glb", (gltf) => {
+    largerCornerModel = gltf.scene;
+    largerCornerModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/treeLarge.glb", (gltf) => {
+    treeModel = gltf.scene;
+    placeGridDecorations();
+  });
+
+  roadLoader.load("/billboard.glb", (gltf) => {
+    billboardModel = gltf.scene;
+    placeGridDecorations();
+  });
+
+  roadLoader.load("/grandStand.glb", (gltf) => {
+    grandstandModel = gltf.scene;
+    placeGridDecorations();
+  });
+
+  roadLoader.load("/lightPostModern.glb", (gltf) => {
+    lightModel = gltf.scene;
+    placeGridDecorations();
+  });
+
+  roadLoader.load("/pylon.glb", (gltf) => {
+    pylonModel = gltf.scene;
+    placeGridDecorations();
+  });
+
+  // --- Create Reference Map Ground Plane (Futuristic Grid for Custom Track) ---
+  const gridTex = createFuturisticGridTexture();
+  const groundMat = new THREE.MeshBasicMaterial({
+    map: gridTex,
+    side: THREE.DoubleSide,
+  });
+  const groundGeo = new THREE.PlaneGeometry(240, 240);
+  groundGeo.rotateX(-Math.PI / 2);
+  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+  groundMesh.position.set(0, -0.52, 0); // slightly below track road
+  groundMesh.userData.isDriveable = true; // make ground solid to prevent falling into the void
+  trackGroup.add(groundMesh);
+
+  // --- Create Lit Start/Finish Line Checker ---
+  const finishLineGeo = new THREE.PlaneGeometry(trackWidth, 4);
+  finishLineGeo.rotateX(-Math.PI / 2);
+  const finishMat = createFuturisticFinishMaterial(8, 1);
+  const finishLine = new THREE.Mesh(finishLineGeo, finishMat);
+  finishLine.position.set(startX, -0.48, startZ); // Placed at start straight line
+  trackGroup.add(finishLine);
+
+  // --- Retro Synthwave Stage Lighting ---
+  const pinkLight = new THREE.DirectionalLight(0xff0088, 0.7);
+  pinkLight.position.set(-60, 40, -100);
+  trackGroup.add(pinkLight);
+
+  const orangeLight = new THREE.DirectionalLight(0xffaa00, 0.5);
+  orangeLight.position.set(60, 30, 100);
+  trackGroup.add(orangeLight);
+
+  // Populate Boost Pad positions (placed along grid BP cells)
+  const boostPositions: THREE.Vector3[] = [];
+  const rows = grid.length;
+  const cols = grid[0].length;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] === "BP") {
+        boostPositions.push(new THREE.Vector3((c - 7.5) * CELL_SIZE, -0.4, (r - 7.5) * CELL_SIZE));
+      }
     }
   }
 
-  function createStarTexture() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 16;
-    canvas.height = 16;
-    const ctx = canvas.getContext("2d")!;
-    const gradient = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
-    gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.2, "rgba(255,255,255,0.8)");
-    gradient.addColorStop(0.5, "rgba(255,255,255,0.2)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 16, 16);
-    return new THREE.CanvasTexture(canvas);
-  }
+  // --- Load and Place Low-Poly Kenney Barriers ---
+  const gltfLoader = new GLTFLoader();
+  const barriersGroup = new THREE.Group();
+  trackGroup.add(barriersGroup);
 
-  starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
-  starGeo.setAttribute("color", new THREE.BufferAttribute(starCol, 3));
-  const starMat = new THREE.PointsMaterial({
-    size: 4,
-    vertexColors: true,
-    map: createStarTexture(),
-    blending: THREE.AdditiveBlending,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
+  let redModel: THREE.Object3D | null = null;
+  let whiteModel: THREE.Object3D | null = null;
+
+  const placeBarriers = () => {
+    if (!redModel || !whiteModel) return;
+
+    const curveLength = trackCurve.getLength();
+    const spacing = 2.8; // space between barriers to close gaps
+    const count = Math.floor(curveLength / spacing);
+
+    for (let i = 0; i < count; i++) {
+      const u = i / count;
+      const pt = trackCurve.getPointAt(u);
+      const tangent = trackCurve.getTangentAt(u);
+      const up = new THREE.Vector3(0, 1, 0);
+      const normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+
+      const isRed = i % 2 === 0;
+
+      // Left side barrier
+      const leftInstance = isRed ? redModel.clone() : whiteModel.clone();
+      leftInstance.position.copy(pt).add(normal.clone().multiplyScalar(-halfWidth - 1.2));
+      leftInstance.position.y = -0.5;
+      leftInstance.lookAt(leftInstance.position.clone().add(tangent));
+      leftInstance.rotateY(Math.PI / 2);
+      leftInstance.scale.set(9.0, 9.0, 9.0);
+      
+      leftInstance.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.userData.isWall = true;
+          child.receiveShadow = false;
+          child.castShadow = false;
+        }
+      });
+      barriersGroup.add(leftInstance);
+
+      // Right side barrier (offset pattern)
+      const rightInstance = isRed ? whiteModel.clone() : redModel.clone();
+      rightInstance.position.copy(pt).add(normal.clone().multiplyScalar(halfWidth + 1.2));
+      rightInstance.position.y = -0.5;
+      rightInstance.lookAt(rightInstance.position.clone().add(tangent));
+      rightInstance.rotateY(Math.PI / 2);
+      rightInstance.scale.set(9.0, 9.0, 9.0);
+
+      rightInstance.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.userData.isWall = true;
+          child.receiveShadow = false;
+          child.castShadow = false;
+        }
+      });
+      barriersGroup.add(rightInstance);
+    }
+  };
+
+  gltfLoader.load("/barrierRed.glb", (gltf) => {
+    redModel = gltf.scene;
+    placeBarriers();
   });
-  const starField = new THREE.Points(starGeo, starMat);
-  trackGroup.add(starField);
 
-  // Finish line
-  const finishLineGeo = new THREE.PlaneGeometry(trackWidth, 4);
-  finishLineGeo.rotateX(-Math.PI / 2);
-  const finishMat = createFuturisticFinishMaterial(trackWidth, 4);
-  const finishLine = new THREE.Mesh(finishLineGeo, finishMat);
-
-  const finishPoint = curve.getPointAt(0);
-  finishLine.position.set(finishPoint.x, finishPoint.y + 0.01, finishPoint.z);
-  const finishTangent = curve.getTangentAt(0);
-  finishLine.rotation.y = Math.atan2(finishTangent.x, finishTangent.z);
-  trackGroup.add(finishLine);
-
-  // DEBUG: Add floating IDs above each custom point so the user knows which one to refer to
-  customPoints.forEach((pt, index) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(0, 0, 128, 64);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 32px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Pt " + index, 64, 32);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({ map: tex });
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.raycast = function () {}; // Disable raycasting to avoid missing camera error
-    sprite.scale.set(6, 3, 1);
-    sprite.position.copy(pt);
-    sprite.position.y += 10; // Float above
-    trackGroup.add(sprite);
+  gltfLoader.load("/barrierWhite.glb", (gltf) => {
+    whiteModel = gltf.scene;
+    placeBarriers();
   });
 
   return {
-    boostSystem: new BoostPadSystem([]),
-    railSystem: new GrindRailSystem([]),
-    curve,
+    boostSystem: new BoostPadSystem(boostPositions, trackCurve),
+    curve: trackCurve,
   };
 }
-
 
 class MultiSubsystem implements TrackSubsystem {
   constructor(private list: TrackSubsystem[]) {}
@@ -5996,5 +6460,411 @@ export function buildAbyssTrenchTrack(trackGroup: THREE.Group): TrackBuildResult
     neonGeyserSystem: new MultiSubsystem([geyser1, geyser2]), // Register composite geyser system
     tunnelLightsSystem: new MultiSubsystem([phase1System, phase2System, phase3System, phase4System, phase5System]), // Register Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 dynamic animation environments
     curve,
+  };
+}
+
+export function buildMarioTrack(trackGroup: THREE.Group): TrackBuildResult {
+  const CELL_SIZE = 15.0;
+
+  // 1. 2D grid path coordinates representing the classic Mario Circuit 1
+  const MARIO_PATH = [
+    { r: 13, c: 12 },
+    { r: 12, c: 12 },
+    { r: 11, c: 12 }, // Starting grid area
+    { r: 10, c: 12 }, // Start/finish line
+    { r: 9, c: 12 },
+    { r: 8, c: 12 },
+    { r: 7, c: 12 },
+    { r: 6, c: 12 },
+    { r: 5, c: 12 },
+    { r: 4, c: 12 },
+    { r: 3, c: 12 }, // Curve West
+    
+    // Top horizontal straight
+    { r: 3, c: 11 },
+    { r: 3, c: 10 },
+    { r: 3, c: 9 },  // Diagonal transition starts
+    
+    // Diagonal South-West straight
+    { r: 4, c: 8 },
+    { r: 5, c: 7 },
+    { r: 6, c: 6 },
+    { r: 7, c: 5 },
+    { r: 8, c: 4 },  // Curve South
+    
+    // Left vertical straight
+    { r: 9, c: 4 },
+    { r: 10, c: 4 },
+    { r: 11, c: 4 },
+    { r: 12, c: 4 }, // Curve East
+    
+    // Bottom U-turn loop
+    { r: 12, c: 5 },
+    { r: 12, c: 6 }, // Curve North-East
+    
+    // Diagonal North-East straight
+    { r: 11, c: 7 },
+    { r: 10, c: 8 },
+    { r: 9, c: 9 },  // U-turn South
+    
+    // Center hairpin vertical straight
+    { r: 8, c: 10 },
+    { r: 9, c: 10 },
+    { r: 10, c: 10 }, // Diagonal South-West
+    
+    // Diagonal South-West
+    { r: 11, c: 9 },
+    { r: 12, c: 8 }, // Curve East
+    
+    // Bottom-Right bend connecting back to start straight
+    { r: 13, c: 9 },
+    { r: 13, c: 10 },
+    { r: 13, c: 11 },
+  ];
+
+  // Map cells to 3D points
+  const marioCircuitPoints = MARIO_PATH.map(p => {
+    const x = (p.c - 7.5) * CELL_SIZE;
+    const z = (p.r - 7.5) * CELL_SIZE;
+    return new THREE.Vector3(x, 0, z);
+  });
+
+  const trackCurve = new THREE.CatmullRomCurve3(marioCircuitPoints, true);
+
+  const segments = 400;
+  const spacedPoints = trackCurve.getSpacedPoints(segments);
+  const trackWidth = 15.0; // Matches CELL_SIZE
+  const halfWidth = trackWidth / 2;
+
+  // Generate invisible physics collider backing ribbon geometry
+  const trackGeo = new THREE.BufferGeometry();
+  const roadVertices = new Float32Array((segments + 1) * 2 * 3);
+  const roadUvs = new Float32Array((segments + 1) * 2 * 2);
+  const roadIndices = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const index = i === segments ? 0 : i;
+    const p = spacedPoints[index];
+    const t = i / segments;
+    const tangent = trackCurve.getTangentAt(Math.min(t, 0.9999));
+    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+    const vIn = p.clone().add(normal.clone().multiplyScalar(-halfWidth));
+    const vOut = p.clone().add(normal.clone().multiplyScalar(halfWidth));
+
+    roadVertices[i * 6] = vIn.x;
+    roadVertices[i * 6 + 1] = vIn.y;
+    roadVertices[i * 6 + 2] = vIn.z;
+    roadVertices[i * 6 + 3] = vOut.x;
+    roadVertices[i * 6 + 4] = vOut.y;
+    roadVertices[i * 6 + 5] = vOut.z;
+
+    roadUvs[i * 4] = 0;
+    roadUvs[i * 4 + 1] = t;
+    roadUvs[i * 4 + 2] = 1;
+    roadUvs[i * 4 + 3] = t;
+
+    if (i < segments) {
+      const a = i * 2;
+      const b = i * 2 + 1;
+      const c = (i + 1) * 2;
+      const d = (i + 1) * 2 + 1;
+      roadIndices.push(a, b, c);
+      roadIndices.push(b, d, c);
+    }
+  }
+
+  trackGeo.setAttribute("position", new THREE.BufferAttribute(roadVertices, 3));
+  trackGeo.setAttribute("uv", new THREE.BufferAttribute(roadUvs, 2));
+  trackGeo.setIndex(roadIndices);
+  trackGeo.computeVertexNormals();
+
+  const trackMat = new THREE.MeshBasicMaterial({ visible: false });
+  const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+  trackMesh.position.y = -0.5;
+  trackMesh.userData.isDriveable = true;
+  trackGroup.add(trackMesh);
+
+  // --- Load and Place Modular 3D Road Tiles ---
+  const roadLoader = new GLTFLoader();
+  const roadTilesGroup = new THREE.Group();
+  trackGroup.add(roadTilesGroup);
+
+  let straightModel: THREE.Object3D | null = null;
+  let cornerModel: THREE.Object3D | null = null;
+  let startModel: THREE.Object3D | null = null;
+  let arrowModel: THREE.Object3D | null = null;
+
+  const createCenteredModelWrapper = (originalModel: THREE.Object3D, offsetX: number, offsetZ: number) => {
+    const parentGroup = new THREE.Group();
+    const modelClone = originalModel.clone();
+    modelClone.position.set(offsetX, 0, offsetZ);
+    parentGroup.add(modelClone);
+    return parentGroup;
+  };
+
+  const buildGridTiles = () => {
+    if (!straightModel || !cornerModel || !startModel || !arrowModel) return;
+
+    const pathLen = MARIO_PATH.length;
+    for (let i = 0; i < pathLen; i++) {
+      const prev = MARIO_PATH[(i - 1 + pathLen) % pathLen];
+      const curr = MARIO_PATH[i];
+      const next = MARIO_PATH[(i + 1) % pathLen];
+
+      const dxIn = curr.c - prev.c;
+      const dzIn = curr.r - prev.r;
+      const dxOut = next.c - curr.c;
+      const dzOut = next.r - curr.r;
+
+      const posX = (curr.c - 7.5) * CELL_SIZE;
+      const posZ = (curr.r - 7.5) * CELL_SIZE;
+
+      let tileInstance: THREE.Group;
+      let rotY = 0;
+      let scaleX = CELL_SIZE;
+      let scaleZ = CELL_SIZE;
+
+      const isCorner = (dxIn * dxOut + dzIn * dzOut === 0) && (dxIn !== 0 || dzIn !== 0) && (dxOut !== 0 || dzOut !== 0);
+
+      if (isCorner) {
+        tileInstance = createCenteredModelWrapper(cornerModel, -0.5, 0.5);
+
+        const dx1 = prev.c - curr.c;
+        const dz1 = prev.r - curr.r;
+        const dx2 = next.c - curr.c;
+        const dz2 = next.r - curr.r;
+
+        // TL: connects South (dz=1) and East (dx=1)
+        if ((dx1 === 1 || dx2 === 1) && (dz1 === 1 || dz2 === 1)) {
+          rotY = 0;
+        }
+        // TR: connects South (dz=1) and West (dx=-1)
+        else if ((dx1 === -1 || dx2 === -1) && (dz1 === 1 || dz2 === 1)) {
+          rotY = Math.PI / 2;
+        }
+        // BR: connects North (dz=-1) and West (dx=-1)
+        else if ((dx1 === -1 || dx2 === -1) && (dz1 === -1 || dz2 === -1)) {
+          rotY = Math.PI;
+        }
+        // BL: connects North (dz=-1) and East (dx=1)
+        else if ((dx1 === 1 || dx2 === 1) && (dz1 === -1 || dz2 === -1)) {
+          rotY = 3 * Math.PI / 2;
+        }
+      } else {
+        const isSF = (curr.r === 10 && curr.c === 12);
+        const isBP = (curr.r === 9 && curr.c === 12) || 
+                     (curr.r === 7 && curr.c === 12) || 
+                     (curr.r === 5 && curr.c === 7) || 
+                     (curr.r === 6 && curr.c === 6);
+
+        if (isSF) {
+          tileInstance = createCenteredModelWrapper(startModel, -0.5, 0.5);
+        } else if (isBP) {
+          tileInstance = createCenteredModelWrapper(arrowModel, -0.5, 0.5);
+        } else {
+          tileInstance = createCenteredModelWrapper(straightModel, -0.5, 0.5);
+        }
+
+        const dx = next.c - curr.c;
+        const dz = next.r - curr.r;
+        rotY = Math.atan2(dx, dz);
+
+        const isDiagonal = (dx !== 0 && dz !== 0);
+        if (isDiagonal) {
+          const lengthScale = Math.sqrt(dx * dx + dz * dz) * CELL_SIZE;
+          scaleX = CELL_SIZE;
+          scaleZ = lengthScale;
+        } else {
+          scaleX = CELL_SIZE;
+          scaleZ = CELL_SIZE;
+        }
+      }
+
+      tileInstance.position.set(posX, -0.49, posZ);
+      tileInstance.rotation.y = rotY;
+      tileInstance.scale.set(scaleX, 1.0, scaleZ);
+
+      tileInstance.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.userData.isDriveable = true;
+        }
+      });
+
+      roadTilesGroup.add(tileInstance);
+    }
+  };
+
+  roadLoader.load("/roadStraight.glb", (gltf) => {
+    straightModel = gltf.scene;
+    straightModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadCornerSmall.glb", (gltf) => {
+    cornerModel = gltf.scene;
+    cornerModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadStart.glb", (gltf) => {
+    startModel = gltf.scene;
+    startModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  roadLoader.load("/roadStraightArrow.glb", (gltf) => {
+    arrowModel = gltf.scene;
+    arrowModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.receiveShadow = true;
+        child.castShadow = false;
+        if (child.material) {
+          (child.material as THREE.Material).side = THREE.DoubleSide;
+        }
+      }
+    });
+    buildGridTiles();
+  });
+
+  // --- Create Reference Map Ground Plane ---
+  const mapLoader = new THREE.TextureLoader();
+  const mapTex = mapLoader.load("mario_map.webp");
+  const groundMat = new THREE.MeshBasicMaterial({
+    map: mapTex,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.85,
+  });
+  const groundGeo = new THREE.PlaneGeometry(240, 240);
+  groundGeo.rotateX(-Math.PI / 2);
+  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+  groundMesh.position.set(0, -0.52, 0); // slightly below track road
+  groundMesh.userData.isDriveable = true; // make ground solid to prevent falling into the void
+  trackGroup.add(groundMesh);
+
+  // --- Create Lit Start/Finish Line Checker ---
+  const finishLineGeo = new THREE.PlaneGeometry(trackWidth, 4);
+  finishLineGeo.rotateX(-Math.PI / 2);
+  const finishMat = createFuturisticFinishMaterial(8, 1);
+  const finishLine = new THREE.Mesh(finishLineGeo, finishMat);
+  finishLine.position.set(67.5, -0.48, 37.5); // Row 10, col 12
+  trackGroup.add(finishLine);
+
+  // --- Retro Synthwave Stage Lighting ---
+  const pinkLight = new THREE.DirectionalLight(0xff0088, 0.7);
+  pinkLight.position.set(-60, 40, -100);
+  trackGroup.add(pinkLight);
+
+  const orangeLight = new THREE.DirectionalLight(0xffaa00, 0.5);
+  orangeLight.position.set(60, 30, 100);
+  trackGroup.add(orangeLight);
+
+  // Boost Pad positions (placed along start straight and diagonal straight)
+  const boostPositions = [
+    new THREE.Vector3(67.5, -0.4, 22.5), // Row 9, col 12
+    new THREE.Vector3(67.5, -0.4, -7.5),  // Row 7, col 12
+    new THREE.Vector3(-22.5, -0.4, -37.5), // Row 5, col 7
+    new THREE.Vector3(-52.5, -0.4, -22.5), // Row 6, col 6
+  ];
+
+  // --- Load and Place Low-Poly Kenney Barriers ---
+  const gltfLoader = new GLTFLoader();
+  const barriersGroup = new THREE.Group();
+  trackGroup.add(barriersGroup);
+
+  let redModel: THREE.Object3D | null = null;
+  let whiteModel: THREE.Object3D | null = null;
+
+  const placeBarriers = () => {
+    if (!redModel || !whiteModel) return;
+
+    const curveLength = trackCurve.getLength();
+    const spacing = 2.8; // space between barriers to close gaps
+    const count = Math.floor(curveLength / spacing);
+
+    for (let i = 0; i < count; i++) {
+      const u = i / count;
+      const pt = trackCurve.getPointAt(u);
+      const tangent = trackCurve.getTangentAt(u);
+      const up = new THREE.Vector3(0, 1, 0);
+      const normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+
+      // Alternating colors
+      const isRed = i % 2 === 0;
+
+      // Left side barrier
+      const leftInstance = isRed ? redModel.clone() : whiteModel.clone();
+      leftInstance.position.copy(pt).add(normal.clone().multiplyScalar(-halfWidth - 1.2));
+      leftInstance.position.y = -0.5;
+      leftInstance.lookAt(leftInstance.position.clone().add(tangent));
+      leftInstance.rotateY(Math.PI / 2);
+      leftInstance.scale.set(9.0, 9.0, 9.0);
+      
+      leftInstance.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.userData.isWall = true;
+          child.receiveShadow = false;
+          child.castShadow = false;
+        }
+      });
+      barriersGroup.add(leftInstance);
+
+      // Right side barrier (offset pattern)
+      const rightInstance = isRed ? whiteModel.clone() : redModel.clone();
+      rightInstance.position.copy(pt).add(normal.clone().multiplyScalar(halfWidth + 1.2));
+      rightInstance.position.y = -0.5;
+      rightInstance.lookAt(rightInstance.position.clone().add(tangent));
+      rightInstance.rotateY(Math.PI / 2);
+      rightInstance.scale.set(9.0, 9.0, 9.0);
+
+      rightInstance.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.userData.isWall = true;
+          child.receiveShadow = false;
+          child.castShadow = false;
+        }
+      });
+      barriersGroup.add(rightInstance);
+    }
+  };
+
+  gltfLoader.load("/barrierRed.glb", (gltf) => {
+    redModel = gltf.scene;
+    placeBarriers();
+  });
+
+  gltfLoader.load("/barrierWhite.glb", (gltf) => {
+    whiteModel = gltf.scene;
+    placeBarriers();
+  });
+
+  return {
+    boostSystem: new BoostPadSystem(boostPositions, trackCurve),
+    curve: trackCurve,
   };
 }

@@ -215,7 +215,20 @@ export class CatPilotAvatar {
         this.hitTimer = 0.5;
     }
 
-    public update(deltaTime: number, isMoving: boolean, isAirborne: boolean, isCharging: boolean = false, bankAngle: number = 0, spinAngle: number = 0, yVelocity: number = 0, state: 'normal' | 'crashed' | 'victory' = 'normal', isDrifting: boolean = false) {
+    public update(
+      deltaTime: number,
+      isMoving: boolean,
+      isAirborne: boolean,
+      isCharging: boolean = false,
+      bankAngle: number = 0,
+      spinAngle: number = 0,
+      yVelocity: number = 0,
+      state: 'normal' | 'crashed' | 'victory' = 'normal',
+      isDrifting: boolean = false,
+      isClimbingAir: boolean = false,
+      isDescendingAir: boolean = false,
+      isSustainedAirCruise: boolean = false
+    ) {
         this.time += deltaTime;
 
         // 1. Blinking Logic
@@ -338,22 +351,74 @@ export class CatPilotAvatar {
             mouthSx = 0.5; mouthSy = 2.5; // Straining "o" face
             
         } else if (isAirborne) {
-            if (yVelocity < -2.0) {
-                // Gliding/Falling (Parachute pose)
-                const flutter = Math.sin(this.time * 25) * 0.05;
-                pScaleX = 1.05 + flutter; pScaleY = 0.95; pScaleZ = 1.05 + flutter;
-                lFootPx = -0.7; lFootPy = 0.4; lFootRz = Math.PI / 4;
-                rFootPx = 0.7; rFootPy = 0.4; rFootRz = -Math.PI / 4;
-                lHandPx = -1.1; lHandPy = 0.2; lHandRz = Math.PI / 4;
-                rHandPx = 1.1; rHandPy = 0.2; rHandRz = -Math.PI / 4;
-                lEarRz = Math.PI / 4 + flutter; rEarRz = -Math.PI / 4 - flutter;
-                bodyRz = bankAngle * -0.3;
+            if (isClimbingAir || yVelocity > 1.5) {
+                // Active sustained climbing / ascending in air (globe flight)
+                // Nose-up effort pose, arms/legs gripping, tail down for stability
+                pScaleX = 0.92;
+                pScaleY = 1.18;
+                pScaleZ = 0.92;
+                bodyY = 1.15;
+                bodyRz = bankAngle * -0.25;
                 
-                tailRx = -Math.PI / 4;
-                tailRz = flutter * 2; // Tail fluttering up
-                mouthSx = 0.8; mouthSy = 2.0; // Open mouth falling
+                lFootPx = -0.55; lFootPy = 0.35; lFootPz = 0.1; lFootRx = Math.PI / 5; lFootRz = Math.PI / 8;
+                rFootPx = 0.55; rFootPy = 0.35; rFootPz = 0.1; rFootRx = Math.PI / 5; rFootRz = -Math.PI / 8;
+                
+                lHandPx = -1.05; lHandPy = 0.55; lHandPz = 0.35; lHandRz = -Math.PI / 3;
+                rHandPx = 1.05; rHandPy = 0.55; rHandPz = 0.35; rHandRz = Math.PI / 3;
+                
+                lEarRz = Math.PI / 5; rEarRz = -Math.PI / 5; // Ears back from effort
+                bodyRz += bankAngle * -0.15;
+                
+                tailRx = -Math.PI / 2.8; // Tail low and trailing
+                tailRz = Math.sin(this.time * 4) * 0.25 + bankAngle * 0.3;
+                mouthSx = 0.7; mouthSy = 1.6; // Focused "o" mouth
+            } else if (isDescendingAir || yVelocity < -1.5) {
+                // Active descending / diving (streamlined tuck)
+                const flutter = Math.sin(this.time * 28) * 0.04;
+                pScaleX = 1.02 + flutter; pScaleY = 0.88; pScaleZ = 1.02 + flutter;
+                bodyY = 0.95;
+                bodyRz = bankAngle * -0.4;
+                
+                lFootPx = -0.65; lFootPy = 0.25; lFootPz = -0.1; lFootRx = -Math.PI / 4; lFootRz = Math.PI / 5;
+                rFootPx = 0.65; rFootPy = 0.25; rFootPz = -0.1; rFootRx = -Math.PI / 4; rFootRz = -Math.PI / 5;
+                
+                lHandPx = -1.15; lHandPy = 0.15; lHandPz = 0.6; lHandRz = -Math.PI / 2.5;
+                rHandPx = 1.15; rHandPy = 0.15; rHandPz = 0.6; rHandRz = Math.PI / 2.5;
+                
+                lEarRz = Math.PI / 3 + flutter; rEarRz = -Math.PI / 3 - flutter; // Wind swept
+                tailRx = -Math.PI / 1.8;
+                tailRz = flutter * 3.5 + bankAngle * 0.4; // Streaming + wag
+                mouthSx = 1.1; mouthSy = 1.3; // Slight grimace
+            } else if (isSustainedAirCruise) {
+                // Sustained level flight / "driving in the air" cruise pose (globe)
+                // Relaxed but controlled forward flight – legs tucked, arms forward, tail streaming
+                const cruisePhase = this.time * 6.5;
+                const gentleBob = Math.sin(cruisePhase) * 0.025;
+                
+                pScaleX = 0.96;
+                pScaleY = 1.04 + gentleBob * 0.6;
+                pScaleZ = 0.96;
+                bodyY = 1.05 + gentleBob;
+                bodyRz = bankAngle * -0.22;
+                
+                // Legs in relaxed tucked hover (gentle alternating cycle, not ground waddle)
+                const legCycle = Math.sin(cruisePhase) * 0.12;
+                lFootPx = -0.5; lFootPy = 0.22 + legCycle * 0.15; lFootPz = 0.05; lFootRx = Math.PI / 8 + legCycle * 0.3;
+                rFootPx = 0.5; rFootPy = 0.22 - legCycle * 0.15; rFootPz = 0.05; rFootRx = Math.PI / 8 - legCycle * 0.3;
+                lFootRz = Math.PI / 10; rFootRz = -Math.PI / 10;
+                
+                // Arms in relaxed forward "gripping the wind" or relaxed pose
+                lHandPx = -1.0; lHandPy = 0.28 + Math.sin(cruisePhase * 0.8) * 0.06; lHandPz = 0.45; lHandRz = -Math.PI / 3.2;
+                rHandPx = 1.0; rHandPy = 0.28 - Math.sin(cruisePhase * 0.8) * 0.06; rHandPz = 0.45; rHandRz = Math.PI / 3.2;
+                
+                lEarRz = Math.PI / 5.5; rEarRz = -Math.PI / 5.5; // Slightly back from wind
+                bodyRz += bankAngle * -0.1;
+                
+                tailRx = -Math.PI / 2.1; // Long streaming tail
+                tailRz = Math.sin(cruisePhase * 1.1) * 0.35 + bankAngle * 0.25; // Gentle side-to-side stream + bank reaction
+                mouthSx = 0.95; mouthSy = 1.15; // Slight determined smile
             } else {
-                // Jumping up (Squash & Stretch)
+                // Fallback transient air (original jump / short hop behavior)
                 const stretch = Math.min(Math.abs(yVelocity) * 0.05, 0.25);
                 pScaleX = 0.85 - stretch; pScaleY = 1.15 + stretch; pScaleZ = 0.85 - stretch;
                 lFootPy = 0.3; rFootPy = 0.3;
@@ -363,8 +428,8 @@ export class CatPilotAvatar {
                 lEarRz = Math.PI / 8; rEarRz = -Math.PI / 8;
                 bodyRz = bankAngle * -0.2;
                 
-                tailRx = -Math.PI / 1.5; // Tail pointing down-ish
-                mouthSx = 0.8; mouthSy = 1.5; // Excitement
+                tailRx = -Math.PI / 1.5;
+                mouthSx = 0.8; mouthSy = 1.5;
             }
         } else if (isMoving) {
             // Waddle forward with banking

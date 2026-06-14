@@ -2,6 +2,18 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { fbm } from "../utils";
 
+// Seeded PRNG (mulberry32) for reproducible planet generation
+function mulberry32(seed: number) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+let seededRandom: () => number = Math.random;
+
 export class PlanetGenerator {
   public spinningBlades: THREE.Object3D[] = [];
   public glowingWindows: THREE.Object3D[] = [];
@@ -9,10 +21,18 @@ export class PlanetGenerator {
   public waterCore!: THREE.Mesh;
   public groundGroup = new THREE.Group();
   public tilesData: any[] = [];
+  public regions: any[] = [];
+  public tileGroups: any[] = [];
 
   constructor() {}
 
-  public generate(scene: THREE.Scene, planetRadius: number): Promise<void> {
+  public generate(scene: THREE.Scene, planetRadius: number, worldSeed?: number): Promise<void> {
+    // Initialize seeded RNG — same seed = same planet
+    const seed = worldSeed ?? Math.floor(Math.random() * 2147483647);
+    seededRandom = mulberry32(seed);
+    console.log(`[PlanetGenerator] World seed: ${seed}`);
+    (window as any)._worldSeed = seed;
+
     this.groundGroup.name = "CozyGlobeGroundGroup";
 
     // MANDATORY INTEGRITY WARNING:
@@ -24,13 +44,13 @@ export class PlanetGenerator {
     // Generate 15 floating ring gates at random spherical coordinates
     const colors = [0xff33bb, 0x00ffff, 0xffff00, 0x00ff88, 0xaa33ff];
     for (let i = 0; i < 15; i++) {
-      const phi = Math.acos(-1 + 2 * Math.random());
-      const theta = Math.random() * Math.PI * 2;
-      const altitude = 15.0 + Math.random() * 20.0; // Altitude between 15.0 and 35.0
+      const phi = Math.acos(-1 + 2 * seededRandom());
+      const theta = seededRandom() * Math.PI * 2;
+      const altitude = 15.0 + seededRandom() * 20.0; // Altitude between 15.0 and 35.0
       const r = planetRadius + altitude;
       const pos = new THREE.Vector3().setFromSphericalCoords(r, phi, theta);
 
-      const colorHex = colors[Math.floor(Math.random() * colors.length)];
+      const colorHex = colors[Math.floor(seededRandom() * colors.length)];
       const torusGeo = new THREE.TorusGeometry(3.2, 0.4, 8, 24);
       const torusMat = new THREE.MeshPhongMaterial({
         color: colorHex,
@@ -42,12 +62,13 @@ export class PlanetGenerator {
       });
       const torusMesh = new THREE.Mesh(torusGeo, torusMat);
       torusMesh.castShadow = true;
+      torusMesh.visible = false; // Hidden initially until a Golden Ring starts the slalom trial!
 
       const group = new THREE.Group();
       group.position.copy(pos);
       group.lookAt(0, 0, 0);
       group.rotateX(-Math.PI / 2);
-      group.rotateY(Math.random() * Math.PI * 2);
+      group.rotateY(seededRandom() * Math.PI * 2);
 
       group.add(torusMesh);
       this.groundGroup.add(group);
@@ -59,6 +80,70 @@ export class PlanetGenerator {
         color: colorHex
       });
     }
+
+    // Generate 3 grand Golden Ring Gates (Time-Attack Event Starters)
+    const goldPhiTheta = [
+      { phi: Math.PI / 2.2, theta: 0.1 },             // Near equator, positive X
+      { phi: Math.PI / 3.4, theta: Math.PI * 0.75 },   // Hemisphere high, mid-west
+      { phi: Math.PI / 1.6, theta: Math.PI * 1.5 }     // Low altitude slope, south-east
+    ];
+    for (let i = 0; i < goldPhiTheta.length; i++) {
+      const { phi, theta } = goldPhiTheta[i];
+      const altitude = 22.0; // Perfect accessible altitude
+      const r = planetRadius + altitude;
+      const pos = new THREE.Vector3().setFromSphericalCoords(r, phi, theta);
+
+      const colorHex = 0xffd700; // Brilliant Pure Gold
+      const torusGeo = new THREE.TorusGeometry(4.6, 0.55, 12, 32);
+      const torusMat = new THREE.MeshPhongMaterial({
+        color: colorHex,
+        emissive: colorHex,
+        emissiveIntensity: 3.5,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide
+      });
+      const torusMesh = new THREE.Mesh(torusGeo, torusMat);
+      torusMesh.castShadow = true;
+
+      const group = new THREE.Group();
+      group.position.copy(pos);
+      group.lookAt(0, 0, 0);
+      group.rotateX(-Math.PI / 2);
+      group.rotateY(seededRandom() * Math.PI * 2);
+
+      group.add(torusMesh);
+
+      // Add a rotating orbital star/crystal group
+      const gemGeo = new THREE.OctahedronGeometry(0.75, 0);
+      const gemMat = new THREE.MeshPhongMaterial({
+        color: 0xffaa00,
+        emissive: 0xff5500,
+        emissiveIntensity: 2.2,
+        flatShading: true
+      });
+      const orbitalGroup = new THREE.Group();
+      const numGems = 5;
+      for (let gIdx = 0; gIdx < numGems; gIdx++) {
+        const gem = new THREE.Mesh(gemGeo, gemMat);
+        const lAngle = (gIdx / numGems) * Math.PI * 2;
+        gem.position.set(Math.cos(lAngle) * 6.2, Math.sin(lAngle) * 6.2, 0);
+        orbitalGroup.add(gem);
+      }
+      group.add(orbitalGroup);
+      this.groundGroup.add(group);
+
+      (window as any)._ringGates.push({
+        mesh: torusMesh,
+        group: group,
+        gemGroup: orbitalGroup,
+        collected: false,
+        color: colorHex,
+        isGoldenTrigger: true
+      });
+    }
+
+    console.log(`[PlanetGenerator] Generated ring gates. Total gates created: ${(window as any)._ringGates.length}`);
 
     // 1. Tile Geometry Helper
     function createTileGeometry(
@@ -249,32 +334,33 @@ export class PlanetGenerator {
 
       if (elevation < -1.1) {
         biome = "water";
-        displacement = -0.4;
+        displacement = -0.5;
         topColor = new THREE.Color(0x2471a3);
         bottomColor = new THREE.Color(0x154360);
       } else if (temperature < 0.28) {
         biome = "mountain";
-        displacement = 0.5;
-        topColor = new THREE.Color(0xf2f4f4);
+        displacement = 1.8;
+        topColor = new THREE.Color(0xd5d8dc);
         bottomColor = new THREE.Color(0x7f8c8d);
       } else if (temperature > 0.58 && humidity < 0.36) {
         biome = "sand";
-        displacement = 0.1;
+        displacement = 0.15;
         topColor = new THREE.Color(0xf5b041);
         bottomColor = new THREE.Color(0xba4a00);
       } else if (temperature > 0.48 && humidity > 0.64) {
         biome = "hill";
-        displacement = 0.8;
+        displacement = 1.2;
         topColor = new THREE.Color(0x196f3d);
         bottomColor = new THREE.Color(0x4a235a);
       } else {
         biome = "grass";
-        displacement = 0.3;
+        displacement = 0.4;
         topColor = new THREE.Color(0x52be80);
         bottomColor = new THREE.Color(0x5c4033);
       }
 
       tilesData.push({
+        origIdx: uIdx,
         center: normal,
         vertices: orderedCentroids,
         isPentagon,
@@ -358,10 +444,13 @@ export class PlanetGenerator {
 
       tileGroup.userData = {
         uIdx,
+        origIdx: tile.origIdx,
         isPentagon: tile.isPentagon,
         biome: tile.biome,
         center: tile.center,
-        displacement: tile.displacement
+        displacement: tile.displacement,
+        vertices: tile.vertices || [], // boundary points for exact hex edge markings in space view
+        logicalRegion: null
       };
 
       (tileGroup as any)._biome = tile.biome;
@@ -373,6 +462,207 @@ export class PlanetGenerator {
 
     this.groundGroup.position.y = -(planetRadius + 2.5) - 0.25;
     scene.add(this.groundGroup);
+
+    // Assign logical regions early using spherical Voronoi (evenly distributed seeds)
+    const NUM_REGIONS = 9;
+    const seeds = [];
+    const goldenAngle = 2.399963229728653; // radians
+    for (let i = 0; i < NUM_REGIONS; i++) {
+      const y = 1 - (i / (NUM_REGIONS - 1)) * 2;
+      const radius = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = i * goldenAngle;
+      seeds.push(new THREE.Vector3(
+        Math.cos(theta) * radius,
+        y,
+        Math.sin(theta) * radius
+      ));
+    }
+
+    groundTileHolders.forEach((group, idx) => {
+      const n = (group.userData.center as THREE.Vector3) || (tilesData[idx]?.center as THREE.Vector3);
+      if (!n) return;
+      let bestIdx = 0;
+      let bestDot = -2;
+      for (let s = 0; s < seeds.length; s++) {
+        const d = n.dot(seeds[s]);
+        if (d > bestDot) {
+          bestDot = d;
+          bestIdx = s;
+        }
+      }
+      const logId = `region_${bestIdx}`;
+      group.userData.logicalRegion = logId;
+      group.userData.regionId = logId; // compatibility for space view picking and markings
+      if (tilesData[idx]) tilesData[idx].logicalRegion = logId;
+    });
+
+    // Group into logical regions (by assigned region id)
+    const regionMap = new Map();
+    groundTileHolders.forEach((group, idx) => {
+      const lid = group.userData.logicalRegion;
+      if (!lid) return;
+      if (!regionMap.has(lid)) {
+        regionMap.set(lid, { id: lid, tiles: [] });
+      }
+      regionMap.get(lid).tiles.push({
+        group,
+        idx,
+        biome: group.userData.biome,
+        center: (group.userData.center as THREE.Vector3) || (tilesData[idx]?.center as THREE.Vector3),
+        position: group.position.clone(),
+        vertices: group.userData.vertices || tilesData[idx]?.vertices || [],
+      });
+    });
+
+    const computedRegions = Array.from(regionMap.values());
+    this.regions = computedRegions;
+    (window as any)._planetRegions = computedRegions;
+    (window as any)._tileGroups = groundTileHolders;
+
+    // Build Adjacency Cache (neighbor lookup map)
+    const rawNeighbors = Array.from({ length: uniqueVertices.length }, () => new Set<number>());
+    triangles.forEach((tri) => {
+      const [v0, v1, v2] = tri;
+      rawNeighbors[v0].add(v1);
+      rawNeighbors[v0].add(v2);
+      rawNeighbors[v1].add(v0);
+      rawNeighbors[v1].add(v2);
+      rawNeighbors[v2].add(v0);
+      rawNeighbors[v2].add(v1);
+    });
+
+    const origToSeq = new Map<number, number>();
+    tilesData.forEach((tile, idx) => {
+      if (tile.origIdx !== undefined) {
+        origToSeq.set(tile.origIdx, idx);
+      }
+    });
+
+    groundTileHolders.forEach((group, idx) => {
+      const origIdx = group.userData.origIdx;
+      if (origIdx === undefined) return;
+      const rawN = rawNeighbors[origIdx];
+      const seqN: number[] = [];
+      rawN.forEach((nOrigIdx) => {
+        const nSeqIdx = origToSeq.get(nOrigIdx);
+        if (nSeqIdx !== undefined) {
+          seqN.push(nSeqIdx);
+        }
+      });
+      group.userData.neighbors = seqN;
+    });
+
+    // Elevation Smoothing Pass — average each tile's displacement with neighbors
+    // to create gradual transitions instead of abrupt cliffs that cause overlap
+    const smoothPasses = 2;
+    for (let pass = 0; pass < smoothPasses; pass++) {
+      const smoothed = tilesData.map((tile, idx) => {
+        const neighbors = groundTileHolders[idx]?.userData.neighbors || [];
+        if (neighbors.length === 0) return tile.displacement;
+
+        let sum = tile.displacement;
+        let count = 1;
+        for (const nIdx of neighbors) {
+          if (tilesData[nIdx]) {
+            sum += tilesData[nIdx].displacement;
+            count++;
+          }
+        }
+        // Blend: 60% own value + 40% neighbor average (preserves biome identity)
+        const neighborAvg = sum / count;
+        return tile.displacement * 0.6 + neighborAvg * 0.4;
+      });
+
+      // Apply smoothed values
+      smoothed.forEach((d, idx) => {
+        tilesData[idx].displacement = d;
+      });
+    }
+
+    // Update tile group positions with smoothed displacements
+    groundTileHolders.forEach((group, idx) => {
+      const tile = tilesData[idx];
+      if (!tile) return;
+      group.position.copy(tile.center.clone().multiplyScalar(planetRadius + tile.displacement));
+      group.userData.displacement = tile.displacement;
+    });
+
+    // === Procedural Base Surface ===
+    // Generate perfectly-tessellating hex/pentagon geometry from actual dual cell vertices.
+    // This replaces GLTF hex models as the base surface — zero gaps, zero overlap.
+    const allPositions: number[] = [];
+    const allColors: number[] = [];
+    const allIndices: number[] = [];
+    let vertexOffset = 0;
+
+    tilesData.forEach((tile) => {
+      const k = tile.vertices.length;
+      if (k < 3) return;
+      // Water tiles skipped — the animated water core sphere handles the ocean
+      if (tile.biome === 'water') return;
+      const disp = tile.displacement;
+      const center = tile.center;
+      const topCol = tile.topColor;
+      const botCol = tile.bottomColor;
+
+      // Center vertex (top face)
+      const T_c = center.clone().multiplyScalar(planetRadius + disp);
+      allPositions.push(T_c.x, T_c.y, T_c.z);
+      allColors.push(topCol.r, topCol.g, topCol.b);
+
+      // Boundary vertices — top and bottom
+      for (let j = 0; j < k; j++) {
+        const P = tile.vertices[j];
+        // 2% inset creates subtle hex border gaps
+        const I = P.clone().lerp(center, 0.03);
+        const T_j = I.clone().multiplyScalar(planetRadius + disp);
+        allPositions.push(T_j.x, T_j.y, T_j.z);
+        allColors.push(topCol.r * 0.88, topCol.g * 0.88, topCol.b * 0.88);
+      }
+      for (let j = 0; j < k; j++) {
+        const P = tile.vertices[j];
+        const I = P.clone().lerp(center, 0.03);
+        const B_j = I.clone().multiplyScalar(planetRadius - 1.2);
+        allPositions.push(B_j.x, B_j.y, B_j.z);
+        allColors.push(botCol.r * 0.45, botCol.g * 0.45, botCol.b * 0.45);
+      }
+
+      // Top face fan
+      for (let j = 0; j < k; j++) {
+        const next = (j + 1) % k;
+        allIndices.push(vertexOffset, vertexOffset + 1 + j, vertexOffset + 1 + next);
+      }
+
+      // Side walls (quads as 2 triangles each)
+      for (let j = 0; j < k; j++) {
+        const next = (j + 1) % k;
+        const Tj = vertexOffset + 1 + j;
+        const Tnext = vertexOffset + 1 + next;
+        const Bj = vertexOffset + 1 + k + j;
+        const Bnext = vertexOffset + 1 + k + next;
+        allIndices.push(Tj, Bj, Bnext);
+        allIndices.push(Tj, Bnext, Tnext);
+      }
+
+      vertexOffset += 1 + 2 * k;
+    });
+
+    const baseGeo = new THREE.BufferGeometry();
+    baseGeo.setAttribute('position', new THREE.Float32BufferAttribute(allPositions, 3));
+    baseGeo.setAttribute('color', new THREE.Float32BufferAttribute(allColors, 3));
+    baseGeo.setIndex(allIndices);
+    baseGeo.computeVertexNormals();
+
+    const baseMat = new THREE.MeshPhongMaterial({
+      vertexColors: true,
+      flatShading: true,
+      shininess: 5,
+    });
+    const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+    baseMesh.castShadow = true;
+    baseMesh.receiveShadow = true;
+    baseMesh.name = 'ProceduralPlanetSurface';
+    this.groundGroup.add(baseMesh);
 
     // Cozy World Props distribution
     const totalProps = 600;
@@ -408,144 +698,9 @@ export class PlanetGenerator {
       flatShading: true,
     });
 
-    const propHolders: THREE.Group[] = [];
-    (window as any)._glowingWindows = this.glowingWindows;
-    (window as any)._bioluminescentMeshes = this.bioluminescentMeshes;
-    (window as any)._spinningBlades = this.spinningBlades;
-
-    for (let i = 0; i < totalProps; i++) {
-      const phi = Math.acos(-1 + (2 * i) / totalProps);
-      const theta = Math.sqrt(totalProps * Math.PI) * phi;
-
-      const propBase = new THREE.Group();
-      const v_normal = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
-
-      let closestTile = tilesData[0];
-      let maxDot = -1.0;
-      for (let t = 0; t < tilesData.length; t++) {
-        const dot = v_normal.dot(tilesData[t].center);
-        if (dot > maxDot) {
-          maxDot = dot;
-          closestTile = tilesData[t];
-        }
-      }
-
-      const biome = closestTile.biome;
-      let selectedType = "none";
-      const roll = Math.random();
-
-      if (biome === "water") {
-        if (roll < 0.03) selectedType = "fog";
-        else if (roll < 0.06) selectedType = "crystal";
-        else if (roll < 0.15) selectedType = "waterlily";
-        else if (roll < 0.25) selectedType = "waterplant";
-        else continue;
-      } else if (biome === "mountain") {
-        if (roll < 0.6) selectedType = "pine";
-        else if (roll < 0.88) selectedType = "rock";
-        else selectedType = "crystal";
-      } else if (biome === "sand") {
-        if (roll < 0.7) selectedType = "rock";
-        else if (roll < 0.85) selectedType = "crystal";
-        else if (roll < 0.93) selectedType = "fog";
-        else continue;
-      } else if (biome === "hill") {
-        if (roll < 0.55) selectedType = "jungle_tree";
-        else if (roll < 0.7) selectedType = "rock";
-        else if (roll < 0.82) selectedType = "tent";
-        else if (roll < 0.88) selectedType = "cottage";
-        else if (roll < 0.92) selectedType = "windmill";
-        else if (roll < 0.96) selectedType = "tower";
-        else selectedType = "crystal";
-      } else {
-        if (roll < 0.3) selectedType = "cherry_blossom";
-        else if (roll < 0.6) selectedType = "autumn_birch";
-        else if (roll < 0.72) selectedType = "cottage";
-        else if (roll < 0.78) selectedType = "windmill";
-        else if (roll < 0.84) selectedType = "tower";
-        else if (roll < 0.88) selectedType = "tent";
-        else if (roll < 0.92) selectedType = "well";
-        else if (roll < 0.96) selectedType = "rock";
-        else selectedType = "crystal";
-      }
-
-      let cellScale = 7.5;
-      if (closestTile && closestTile.vertices && closestTile.vertices.length > 0) {
-        const cornerNorm = closestTile.vertices[0];
-        const centerNorm = closestTile.center;
-        const centerPt = centerNorm.clone().multiplyScalar(planetRadius);
-        const cornerPt = cornerNorm.clone().multiplyScalar(planetRadius);
-        cellScale = centerPt.distanceTo(cornerPt);
-      }
-
-      let rOffset = -0.05 * cellScale;
-      if (selectedType === "cherry_blossom" || selectedType === "autumn_birch" || selectedType === "jungle_tree") rOffset = -0.1 * cellScale;
-      else if (selectedType === "pine") rOffset = -0.1 * cellScale;
-      else if (selectedType === "rock") rOffset = -0.15 * cellScale;
-      else if (selectedType === "cottage" || selectedType === "windmill" || selectedType === "tower" || selectedType === "well") rOffset = -0.02 * cellScale;
-      else if (selectedType === "waterlily" || selectedType === "waterplant") rOffset = 0.0;
-      else if (selectedType === "crystal") rOffset = -0.15 * cellScale;
-      else if (selectedType === "fog") rOffset = 1.3 * cellScale;
-      else if (selectedType === "tent") rOffset = -0.05 * cellScale;
-
-      const r = planetRadius + closestTile.displacement + rOffset;
-      const finalPos = v_normal.clone().multiplyScalar(r);
-
-      propBase.position.copy(finalPos);
-      propBase.lookAt(new THREE.Vector3(0, 0, 0));
-      propBase.rotateX(-Math.PI / 2);
-
-      const baseScale = 0.9 + Math.random() * 0.25;
-      propBase.scale.setScalar(1.0);
-
-      propBase.userData = {
-        selectedType,
-        baseScale,
-        biome,
-        normal: v_normal,
-        cellScale,
-      };
-
-      if (selectedType === "crystal") {
-        const color = crystalColors[Math.floor(Math.random() * crystalColors.length)];
-        const curCrystalMat = new THREE.MeshPhongMaterial({
-          color: color,
-          emissive: color,
-          emissiveIntensity: 1.8,
-          transparent: true,
-          opacity: 0.9,
-          flatShading: true,
-        });
-
-        const cryMesh = new THREE.Mesh(crystalGeo, curCrystalMat);
-        cryMesh.position.y = 0.3;
-        cryMesh.rotation.set(Math.random() * 0.4, Math.random() * Math.PI, Math.random() * 0.4);
-        cryMesh.scale.set(0.8, 1.2 + Math.random() * 0.5, 0.8);
-        propBase.add(cryMesh);
-        this.bioluminescentMeshes.push({ mesh: cryMesh, baseIntensity: 1.8, type: "crystal" });
-
-        const cryMesh2 = new THREE.Mesh(crystalGeo, curCrystalMat);
-        cryMesh2.position.set(0.4, 0.15, -0.3);
-        cryMesh2.rotation.set(0.4, Math.random() * Math.PI, -0.4);
-        cryMesh2.scale.set(0.4, 0.7, 0.4);
-        propBase.add(cryMesh2);
-        this.bioluminescentMeshes.push({ mesh: cryMesh2, baseIntensity: 1.8, type: "crystal" });
-
-      } else if (selectedType === "fog") {
-        const cloudPuff = new THREE.Mesh(puffGeo, puffMat);
-        cloudPuff.position.set(0, 0.4, 0);
-        cloudPuff.scale.setScalar(1.0);
-        propBase.add(cloudPuff);
-
-        const cloudPuff2 = new THREE.Mesh(puffGeo, puffMat);
-        cloudPuff2.position.set(0.5, 0.2, 0.4);
-        cloudPuff2.scale.setScalar(0.7);
-        propBase.add(cloudPuff2);
-      }
-
-      this.groundGroup.add(propBase);
-      propHolders.push(propBase);
-    }
+    // Props and scattered assets removed to focus on terrain regions + water.
+    // Only the base geodesic tiles (with biome colors/displacement) + variant hex models will provide the ground look.
+    // Floating islands and rings kept as the only non-terrain assets for now.
 
     // 3. Clouds & Parallax Layers
     const cloudsGroup = new THREE.Group();
@@ -571,22 +726,22 @@ export class PlanetGenerator {
 
     for (let c = 0; c < 35; c++) {
       const cluster = new THREE.Group();
-      const numPuffs = 4 + Math.floor(Math.random() * 4);
+      const numPuffs = 4 + Math.floor(seededRandom() * 4);
       for (let j = 0; j < numPuffs; j++) {
         const puff = new THREE.Mesh(cloudPuffGeo, cloudPuffMat);
         puff.position.set(
-          (Math.random() - 0.5) * 6.0,
-          (Math.random() - 0.5) * 3.5,
-          (Math.random() - 0.5) * 6.0
+          (seededRandom() - 0.5) * 6.0,
+          (seededRandom() - 0.5) * 3.5,
+          (seededRandom() - 0.5) * 6.0
         );
-        puff.scale.setScalar(0.5 + Math.random() * 0.8);
+        puff.scale.setScalar(0.5 + seededRandom() * 0.8);
         puff.castShadow = true;
         cluster.add(puff);
       }
 
-      const phi = Math.random() * Math.PI;
-      const theta = Math.random() * Math.PI * 2;
-      const altitude = 24.0 + Math.random() * 12.0;
+      const phi = seededRandom() * Math.PI;
+      const theta = seededRandom() * Math.PI * 2;
+      const altitude = 24.0 + seededRandom() * 12.0;
       const clRadius = planetRadius + altitude;
 
       const norm = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
@@ -612,21 +767,21 @@ export class PlanetGenerator {
 
     for (let c = 0; c < 20; c++) {
       const cluster = new THREE.Group();
-      const numPuffs = 2 + Math.floor(Math.random() * 3);
+      const numPuffs = 2 + Math.floor(seededRandom() * 3);
       for (let j = 0; j < numPuffs; j++) {
         const puff = new THREE.Mesh(cloudPuffGeo, wispyMat);
         puff.position.set(
-          (Math.random() - 0.5) * 8.0,
-          (Math.random() - 0.5) * 2.0,
-          (Math.random() - 0.5) * 8.0
+          (seededRandom() - 0.5) * 8.0,
+          (seededRandom() - 0.5) * 2.0,
+          (seededRandom() - 0.5) * 8.0
         );
-        puff.scale.set(1.5 + Math.random(), 0.3 + Math.random() * 0.3, 1.5 + Math.random());
+        puff.scale.set(1.5 + seededRandom(), 0.3 + seededRandom() * 0.3, 1.5 + seededRandom());
         cluster.add(puff);
       }
 
-      const phi = Math.random() * Math.PI;
-      const theta = Math.random() * Math.PI * 2;
-      const altitude = 42.0 + Math.random() * 10.0;
+      const phi = seededRandom() * Math.PI;
+      const theta = seededRandom() * Math.PI * 2;
+      const altitude = 42.0 + seededRandom() * 10.0;
       const clRadius = planetRadius + altitude;
 
       const norm = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
@@ -671,9 +826,9 @@ export class PlanetGenerator {
     for (let index = 0; index < numIslands; index++) {
       const island = new THREE.Group();
       
-      const phi = Math.random() * Math.PI;
-      const theta = Math.random() * Math.PI * 2;
-      const altitude = 18.0 + Math.random() * 22.0;
+      const phi = seededRandom() * Math.PI;
+      const theta = seededRandom() * Math.PI * 2;
+      const altitude = 18.0 + seededRandom() * 22.0;
       const rad = planetRadius + altitude;
 
       const norm = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
@@ -694,561 +849,15 @@ export class PlanetGenerator {
       bottomMesh.castShadow = true;
       island.add(bottomMesh);
 
-      for (let t = 0; t < 3; t++) {
-        const tree = new THREE.Group();
-        const tx = (Math.random() - 0.5) * 4.8;
-        const tz = (Math.random() - 0.5) * 4.8;
-        tree.position.set(tx, 0.7, tz);
-        
-        const trk = new THREE.Mesh(isldTrunkGeo, trunkMat);
-        trk.position.y = 0.4;
-        tree.add(trk);
-
-        const lvs = new THREE.Mesh(isldLeavesGeo, pineLeafMat);
-        lvs.position.y = 1.25;
-        tree.add(lvs);
-
-        island.add(tree);
-      }
-
-      const crystalGlow = new THREE.Mesh(crystalGeo, new THREE.MeshPhongMaterial({
-        color: 0xfff3a0,
-        emissive: 0xffaa00,
-        emissiveIntensity: 3.5,
-        flatShading: true,
-        transparent: true,
-        opacity: 0.9,
-      }));
-      crystalGlow.position.set(0, 2.3, 0);
-      island.add(crystalGlow);
-
-      (window as any)._islandCollectibles.push({
-        mesh: crystalGlow,
-        collected: false,
-        name: `Star Fragment #${index + 1}`
-      });
+      // Trees and crystals removed (assets stripped for now).
+      // Platforms kept as simple floating islands.
 
       floatingIslandsGroup.add(island);
     }
 
-    // 5. Points of Interest Landmarks
-    const POI_DEFINITIONS = [
-      { name: "✨ Fountain of Dreams", color: 0xffacd5, icon: "✨", desc: "The legendary fountain containing the mystical Star Rod." },
-      { name: "🌳 Whispy Woods", color: 0xff5e7e, icon: "🍎", desc: "The friendly, talkative forest guardian who drops juicy, shiny apples." },
-      { name: "🌸 Floralia Sky Gate", color: 0xffc5e3, icon: "🌸", desc: "A cozy gateway to the legendary kingdom of Floralia in the high skies." },
-      { name: "🏔️ Rainbow Resort Peak", color: 0x9be2ff, icon: "🌟", desc: "A colorful, glowing base that looks out onto the dreamiest of neon skies." },
-      { name: "🏰 Butter Building Tower", color: 0xffdd66, icon: "🏰", desc: "A nostalgic white and yellow tower themed after the classic Dream Land landmark." },
-      { name: "🌋 Halcandra Ruins", color: 0xff8800, icon: "👑", desc: "Ancient crumbling towers humming with volcanic energy and the legendary Master Crown." },
-      { name: "💎 Great Cave Offensive", color: 0x00ffaa, icon: "💎", desc: "A sparkling cavern filled with legendary pink, green, and gold treasure gems!" },
-      { name: "⛵ Warp Star Launchpad", color: 0xffeb3b, icon: "⭐", desc: "A golden pier pointing into the stratosphere with a real parking Warp Star!" },
-    ];
-
-    const globePOIs: any[] = [];
-    (window as any)._globePOIs = globePOIs;
-
-    const numPOIs = POI_DEFINITIONS.length;
-    for (let idx = 0; idx < numPOIs; idx++) {
-      const def = POI_DEFINITIONS[idx];
-      const poiGroup = new THREE.Group();
-
-      const phi = Math.acos(-1 + (2 * idx) / numPOIs);
-      const theta = Math.sqrt(numPOIs * Math.PI) * phi;
-      const norm = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
-      
-      let closestTile = tilesData[0];
-      let maxDot = -1.0;
-      for (let t = 0; t < tilesData.length; t++) {
-        const dot = norm.dot(tilesData[t].center);
-        if (dot > maxDot) {
-          maxDot = dot;
-          closestTile = tilesData[t];
-        }
-      }
-
-      let surfaceRadius = planetRadius + closestTile.displacement;
-      if (closestTile.biome === "water") {
-        surfaceRadius = planetRadius + 0.5;
-      }
-
-      const pos = norm.clone().multiplyScalar(surfaceRadius);
-
-      poiGroup.position.copy(pos);
-      poiGroup.lookAt(new THREE.Vector3(0, 0, 0));
-      poiGroup.rotateX(-Math.PI / 2);
-
-      if (def.name === "✨ Fountain of Dreams") {
-        const cluster = new THREE.Group();
-        
-        const b1 = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.2, 0.4, 6), new THREE.MeshPhongMaterial({ color: 0xecf0f1, flatShading: true }));
-        b1.position.y = 0.2;
-        cluster.add(b1);
-        
-        const b2 = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 0.3, 6), new THREE.MeshPhongMaterial({ color: 0xf1c40f, flatShading: true }));
-        b2.position.y = 0.55;
-        cluster.add(b2);
-
-        const b3 = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.25, 0.2, 6), new THREE.MeshPhongMaterial({ color: 0xffadc5, flatShading: true }));
-        b3.position.y = 0.8;
-        cluster.add(b3);
-
-        const waterGeo = new THREE.CylinderGeometry(1.15, 1.15, 0.05, 6);
-        const waterMat = new THREE.MeshPhongMaterial({ color: 0x34ecef, emissive: 0x1166aa, emissiveIntensity: 1.5, transparent: true, opacity: 0.85 });
-        const water = new THREE.Mesh(waterGeo, waterMat);
-        water.position.y = 0.9;
-        cluster.add(water);
-
-        const archMat = new THREE.MeshPhongMaterial({ color: 0xf1c40f, flatShading: true });
-        const colL = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.4, 4), archMat);
-        colL.position.set(-0.6, 1.5, 0);
-        colL.rotation.z = -0.15;
-        cluster.add(colL);
-
-        const colR = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.4, 4), archMat);
-        colR.position.set(0.6, 1.5, 0);
-        colR.rotation.z = 0.15;
-        cluster.add(colR);
-
-        const beamArc = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.18, 0.35), archMat);
-        beamArc.position.set(0, 2.2, 0);
-        cluster.add(beamArc);
-
-        const wandGroup = new THREE.Group();
-        wandGroup.position.set(0, 1.7, 0);
-
-        const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.0, 4), new THREE.MeshPhongMaterial({ color: 0xe91e63, flatShading: true }));
-        handle.position.y = -0.2;
-        wandGroup.add(handle);
-
-        const starShape = new THREE.Shape();
-        const spikes = 5;
-        const outerRadius = 0.32;
-        const innerRadius = 0.15;
-        for (let i = 0; i < spikes * 2; i++) {
-          const angle = (i * Math.PI) / spikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? outerRadius : innerRadius;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) starShape.moveTo(x, y);
-          else starShape.lineTo(x, y);
-        }
-        starShape.closePath();
-        const starGeo = new THREE.ExtrudeGeometry(starShape, { depth: 0.08, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.01, bevelThickness: 0.01 });
-        starGeo.center();
-
-        const starMat = new THREE.MeshPhongMaterial({
-          color: 0xffeb3b,
-          emissive: 0xff8f00,
-          emissiveIntensity: 2.5,
-          flatShading: true
-        });
-        const starMesh = new THREE.Mesh(starGeo, starMat);
-        starMesh.position.y = 0.4;
-        starMesh.rotation.z = Math.PI / 6;
-        wandGroup.add(starMesh);
-
-        cluster.add(wandGroup);
-        (window as any)._starRod = wandGroup;
-
-        poiGroup.add(cluster);
-
-      } else if (def.name === "🌳 Whispy Woods") {
-        const whisperWood = new THREE.Group();
-
-        const trunkGeoCustom = new THREE.CylinderGeometry(0.6, 0.85, 2.4, 6);
-        const trunkMatCustom = new THREE.MeshPhongMaterial({ color: 0x8a5a36, flatShading: true });
-        const trunk = new THREE.Mesh(trunkGeoCustom, trunkMatCustom);
-        trunk.position.y = 1.2;
-        whisperWood.add(trunk);
-
-        const leafMat = new THREE.MeshPhongMaterial({ color: 0x4caf50, flatShading: true });
-        const mainCanopy = new THREE.Mesh(new THREE.SphereGeometry(1.5, 6, 5), leafMat);
-        mainCanopy.position.set(0, 2.9, 0);
-        mainCanopy.scale.set(1.4, 1.1, 1.4);
-        whisperWood.add(mainCanopy);
-
-        const subCanopyL = new THREE.Mesh(new THREE.SphereGeometry(0.9, 5, 4), leafMat);
-        subCanopyL.position.set(-0.8, 2.4, 0.4);
-        whisperWood.add(subCanopyL);
-
-        const subCanopyR = new THREE.Mesh(new THREE.SphereGeometry(0.9, 5, 4), leafMat);
-        subCanopyR.position.set(0.8, 2.4, -0.4);
-        whisperWood.add(subCanopyR);
-
-        const facialGroup = new THREE.Group();
-        facialGroup.position.set(0, 1.3, 0.75);
-
-        const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 4), trunkMatCustom);
-        nose.rotation.x = Math.PI / 2;
-        nose.position.set(0, 0, 0.15);
-        facialGroup.add(nose);
-
-        const mouthMat = new THREE.MeshPhongMaterial({ color: 0x111111, flatShading: true });
-        const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.1, 6), mouthMat);
-        mouth.rotation.x = Math.PI / 2;
-        mouth.position.set(0, -0.32, 0.05);
-        facialGroup.add(mouth);
-
-        const eyeMat = new THREE.MeshPhongMaterial({ color: 0x222222, flatShading: true });
-        const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), eyeMat);
-        eyeL.position.set(-0.24, 0.18, 0.04);
-        facialGroup.add(eyeL);
-
-        const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), eyeMat);
-        eyeR.position.set(0.24, 0.18, 0.04);
-        facialGroup.add(eyeR);
-
-        trunk.add(facialGroup);
-
-        const appleMat = new THREE.MeshPhongMaterial({ color: 0xf44336, flatShading: true, shininess: 100 });
-        const appleGeo = new THREE.SphereGeometry(0.25, 5, 4);
-        const appleGroup = new THREE.Group();
-
-        const applePositions = [
-          new THREE.Vector3(-0.7, 2.0, 0.6),
-          new THREE.Vector3(0.7, 1.8, 0.5),
-          new THREE.Vector3(0.0, 2.1, -0.8)
-        ];
-
-        applePositions.forEach((pos, idx) => {
-          const apple = new THREE.Mesh(appleGeo, appleMat);
-          apple.position.copy(pos);
-          
-          const stemGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.15, 3);
-          const stem = new THREE.Mesh(stemGeo, trunkMatCustom);
-          stem.position.y = 0.22;
-          stem.rotation.z = 0.2 * (idx - 1);
-          apple.add(stem);
-
-          appleGroup.add(apple);
-        });
-
-        whisperWood.add(appleGroup);
-        (window as any)._whispyApples = appleGroup;
-
-        poiGroup.add(whisperWood);
-
-      } else if (def.name === "🌸 Floralia Sky Gate") {
-        const shrine = new THREE.Group();
-        const gateMat = new THREE.MeshPhongMaterial({ color: 0xba68c8, flatShading: true });
-        const goldMat = new THREE.MeshPhongMaterial({ color: 0xf1c40f, flatShading: true });
-        
-        const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.0, 0.35), gateMat);
-        p1.position.set(-1.6, 1.5, 0);
-        shrine.add(p1);
-
-        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.0, 0.35), gateMat);
-        p2.position.set(1.6, 1.5, 0);
-        shrine.add(p2);
-
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.35, 0.5), gateMat);
-        beam.position.set(0, 3.0, 0);
-        shrine.add(beam);
-
-        const accentBeam = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.15, 0.4), goldMat);
-        accentBeam.position.set(0, 2.5, 0);
-        shrine.add(accentBeam);
-
-        const miniStarShape = new THREE.Shape();
-        const miniSpikes = 5;
-        const oR = 0.28;
-        const iR = 0.13;
-        for (let i = 0; i < miniSpikes * 2; i++) {
-          const angle = (i * Math.PI) / miniSpikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? oR : iR;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) miniStarShape.moveTo(x, y);
-          else miniStarShape.lineTo(x, y);
-        }
-        miniStarShape.closePath();
-        const starPlaqueGeo = new THREE.ExtrudeGeometry(miniStarShape, { depth: 0.05, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.01, bevelThickness: 0.01 });
-        starPlaqueGeo.center();
-        const starPlaque = new THREE.Mesh(starPlaqueGeo, goldMat);
-        starPlaque.position.set(0, 3.2, 0.3);
-        shrine.add(starPlaque);
-
-        const chTrk = new THREE.Mesh(trunkGeo, trunkMat);
-        chTrk.position.set(2.2, 0.5, -2.0);
-        shrine.add(chTrk);
-        
-        const chLvs = new THREE.Mesh(cherryLeafGeo, cherryLeafMat);
-        chLvs.position.set(2.2, 1.7, -2.0);
-        chLvs.scale.setScalar(1.5);
-        shrine.add(chLvs);
-
-        poiGroup.add(shrine);
-
-      } else if (def.name === "🏔️ Rainbow Resort Peak") {
-        const obs = new THREE.Group();
-        
-        const d_baseMat = new THREE.MeshPhongMaterial({ color: 0xe8f8f5, flatShading: true });
-        const d_base = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 1.5, 6), d_baseMat);
-        d_base.position.y = 0.75;
-        obs.add(d_base);
-
-        const d_dome = new THREE.Mesh(new THREE.SphereGeometry(1.4, 6, 5), new THREE.MeshPhongMaterial({ color: 0x3f51b5, emissive: 0x1a237e, emissiveIntensity: 1.0, flatShading: true }));
-        d_dome.position.y = 1.5;
-        obs.add(d_dome);
-
-        const goldMat = new THREE.MeshPhongMaterial({ color: 0xf1c40f, flatShading: true });
-        const starPlateShape = new THREE.Shape();
-        const sSpikes = 5;
-        const outerR = 0.22;
-        const innerR = 0.1;
-        for (let i = 0; i < sSpikes * 2; i++) {
-          const angle = (i * Math.PI) / sSpikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? outerR : innerR;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) starPlateShape.moveTo(x, y);
-          else starPlateShape.lineTo(x, y);
-        }
-        starPlateShape.closePath();
-        const starPlateGeo = new THREE.ExtrudeGeometry(starPlateShape, { depth: 0.04, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.005, bevelThickness: 0.005 });
-        starPlateGeo.center();
-
-        for (let s = 0; s < 4; s++) {
-          const plate = new THREE.Mesh(starPlateGeo, goldMat);
-          const angle = (s / 4) * Math.PI * 2;
-          plate.position.set(Math.cos(angle) * 1.55, 0.7, Math.sin(angle) * 1.55);
-          plate.rotation.y = -angle;
-          obs.add(plate);
-        }
-
-        const telGroup = new THREE.Group();
-        telGroup.position.set(0, 1.7, 0);
-        telGroup.rotation.z = -Math.PI / 6;
-        
-        const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 1.4, 5), new THREE.MeshPhongMaterial({ color: 0xf1c40f, flatShading: true }));
-        scope.position.y = 0.5;
-        telGroup.add(scope);
-        obs.add(telGroup);
-        (window as any)._spinningTelescope = telGroup;
-
-        poiGroup.add(obs);
-
-      } else if (def.name === "🏰 Butter Building Tower") {
-        const w_ridge = new THREE.Group();
-        
-        const baseMat = new THREE.MeshPhongMaterial({ color: 0xfff9c4, flatShading: true });
-        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.1, 2.8, 6), baseMat);
-        base.position.y = 1.4;
-        w_ridge.add(base);
-
-        const topCap = new THREE.Mesh(new THREE.SphereGeometry(0.82, 5, 4), new THREE.MeshPhongMaterial({ color: 0xec407a, flatShading: true }));
-        topCap.position.y = 2.8;
-        w_ridge.add(topCap);
-
-        const millBlades = new THREE.Group();
-        millBlades.position.set(0, 2.7, 0.9);
-        const armatureMat = new THREE.MeshPhongMaterial({ color: 0xb71c1c, flatShading: true });
-        const clothMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
-
-        const core = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.35), armatureMat);
-        millBlades.add(core);
-
-        const bladeStarShape = new THREE.Shape();
-        const bSpikes = 5;
-        const bOut = 0.24;
-        const bIn = 0.11;
-        for (let i = 0; i < bSpikes * 2; i++) {
-          const angle = (i * Math.PI) / bSpikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? bOut : bIn;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) bladeStarShape.moveTo(x, y);
-          else bladeStarShape.lineTo(x, y);
-        }
-        bladeStarShape.closePath();
-        const bladeStarGeo = new THREE.ExtrudeGeometry(bladeStarShape, { depth: 0.04, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.005, bevelThickness: 0.005 });
-        bladeStarGeo.center();
-        const starMat = new THREE.MeshPhongMaterial({ color: 0xffeb3b, flatShading: true });
-
-        for (let b = 0; b < 4; b++) {
-          const armRot = new THREE.Group();
-          armRot.rotation.z = (b / 4) * Math.PI * 2;
-          
-          const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.0, 0.1), armatureMat);
-          spoke.position.y = 1.0;
-          armRot.add(spoke);
-
-          const canvasPanel = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.4, 0.03), clothMat);
-          canvasPanel.position.set(0.22, 1.1, 0.05);
-          armRot.add(canvasPanel);
-
-          const tipStar = new THREE.Mesh(bladeStarGeo, starMat);
-          tipStar.position.set(0, 2.05, 0.08);
-          tipStar.rotation.z = Math.random() * 0.4;
-          armRot.add(tipStar);
-
-          millBlades.add(armRot);
-        }
-        w_ridge.add(millBlades);
-        this.spinningBlades.push(millBlades);
-
-        poiGroup.add(w_ridge);
-
-      } else if (def.name === "🌋 Halcandra Ruins") {
-        const ruins = new THREE.Group();
-        const stoneMat = new THREE.MeshPhongMaterial({ color: 0x2e1a47, flatShading: true });
-        for (let m = 0; m < 3; m++) {
-          const col = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.0 + m * 0.5, 0.5), stoneMat);
-          col.position.set(-1.4 + m * 1.4, (1.0 + m * 0.25), (Math.random() - 0.5) * 1.2);
-          col.rotation.set(Math.random() * 0.1, Math.random() * 0.25, Math.random() * 0.1);
-          ruins.add(col);
-        }
-
-        const crownGroup = new THREE.Group();
-        crownGroup.position.set(0, 2.0, 0);
-
-        const goldCrownMat = new THREE.MeshPhongMaterial({
-          color: 0xffdd44,
-          emissive: 0xff7700,
-          emissiveIntensity: 3.5,
-          flatShading: true
-        });
-
-        const crownRing = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.15, 6), goldCrownMat);
-        crownGroup.add(crownRing);
-
-        for (let s = 0; s < 4; s++) {
-          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 4), goldCrownMat);
-          const sAngle = (s / 4) * Math.PI * 2;
-          spike.position.set(Math.cos(sAngle) * 0.3, 0.22, Math.sin(sAngle) * 0.3);
-          spike.rotation.x = 0.2;
-          spike.rotation.z = -0.2;
-          crownGroup.add(spike);
-        }
-
-        const crownGemShape = new THREE.Shape();
-        const cSpikes = 5;
-        const cOn = 0.18;
-        const cIn = 0.08;
-        for (let i = 0; i < cSpikes * 2; i++) {
-          const angle = (i * Math.PI) / cSpikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? cOn : cIn;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) crownGemShape.moveTo(x, y);
-          else crownGemShape.lineTo(x, y);
-        }
-        crownGemShape.closePath();
-        const crownGemGeo = new THREE.ExtrudeGeometry(crownGemShape, { depth: 0.03, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.002, bevelThickness: 0.002 });
-        crownGemGeo.center();
-
-        const crownGemMesh = new THREE.Mesh(crownGemGeo, new THREE.MeshPhongMaterial({ color: 0x00e5ff, emissive: 0x0091ea, emissiveIntensity: 2.0, flatShading: true }));
-        crownGemMesh.position.set(0, 0, 0.25);
-        crownGroup.add(crownGemMesh);
-
-        ruins.add(crownGroup);
-        (window as any)._floatingLantern = crownGroup;
-
-        poiGroup.add(ruins);
-
-      } else if (def.name === "💎 Great Cave Offensive") {
-        const ab = new THREE.Group();
-        
-        const crystalMaterials = [
-          new THREE.MeshPhongMaterial({ color: 0xe91e63, emissive: 0x880e4f, emissiveIntensity: 3.0, flatShading: true }),
-          new THREE.MeshPhongMaterial({ color: 0x00e676, emissive: 0x1b5e20, emissiveIntensity: 3.0, flatShading: true }),
-          new THREE.MeshPhongMaterial({ color: 0xffeb3b, emissive: 0xf57f17, emissiveIntensity: 3.0, flatShading: true }),
-          new THREE.MeshPhongMaterial({ color: 0x29b6f6, emissive: 0x01579b, emissiveIntensity: 3.0, flatShading: true })
-        ];
-
-        const geoOct = new THREE.Mesh(new THREE.OctahedronGeometry(1.3, 0), crystalMaterials[0]);
-        geoOct.position.y = 0.9;
-        geoOct.rotation.set(0.3, 0.5, 0.2);
-        ab.add(geoOct);
-
-        for (let e = 0; e < 4; e++) {
-          const sideGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.65, 0), crystalMaterials[(e + 1) % crystalMaterials.length]);
-          const angle = (e / 4) * Math.PI * 2;
-          sideGem.position.set(Math.cos(angle) * 1.8, 0.3, Math.sin(angle) * 1.8);
-          sideGem.rotation.set(Math.random() * 0.4, Math.random() * Math.PI, Math.random() * 0.4);
-          ab.add(sideGem);
-        }
-        poiGroup.add(ab);
-
-      } else {
-        const pier = new THREE.Group();
-        const plankMat = new THREE.MeshPhongMaterial({ color: 0x873a5c, flatShading: true });
-        const board = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.12, 3.6), plankMat);
-        board.position.set(0, 1.0, 1.4);
-        board.castShadow = true;
-        pier.add(board);
-
-        const supp1 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 4), plankMat);
-        supp1.position.set(-0.3, 0.5, 1.1);
-        pier.add(supp1);
-
-        const supp2 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 4), plankMat);
-        supp2.position.set(0.3, 0.5, 1.1);
-        pier.add(supp2);
-
-        const starShape = new THREE.Shape();
-        const spikes = 5;
-        const outerRadius = 0.8;
-        const innerRadius = 0.38;
-        for (let i = 0; i < spikes * 2; i++) {
-          const angle = (i * Math.PI) / spikes - Math.PI / 2;
-          const radius = i % 2 === 0 ? outerRadius : innerRadius;
-          const x = Math.cos(angle) * radius;
-          const y = Math.sin(angle) * radius;
-          if (i === 0) starShape.moveTo(x, y);
-          else starShape.lineTo(x, y);
-        }
-        starShape.closePath();
-        const starExtrudeSettings = { depth: 0.18, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.04, bevelThickness: 0.04 };
-        const starGeo = new THREE.ExtrudeGeometry(starShape, starExtrudeSettings);
-        starGeo.center();
-        starGeo.rotateX(Math.PI / 2);
-
-        const warpStarMat = new THREE.MeshPhongMaterial({
-          color: 0xffd700,
-          emissive: 0xffaa00,
-          emissiveIntensity: 1.5,
-          flatShading: true
-        });
-        const warpStarMesh = new THREE.Mesh(starGeo, warpStarMat);
-        warpStarMesh.position.set(0, 1.35, 3.2);
-        warpStarMesh.castShadow = true;
-        pier.add(warpStarMesh);
-        (window as any)._floatingPaperBoat = warpStarMesh;
-
-        pier.add(warpStarMesh);
-        poiGroup.add(pier);
-      }
-
-      const beaconGeo = new THREE.OctahedronGeometry(0.42, 0);
-      const beaconMat = new THREE.MeshPhongMaterial({
-        color: def.color,
-        emissive: def.color,
-        emissiveIntensity: 3.5,
-        transparent: true,
-        opacity: 0.85,
-        flatShading: true
-      });
-      const beacon = new THREE.Mesh(beaconGeo, beaconMat);
-      beacon.position.y = 5.2;
-      poiGroup.add(beacon);
-
-      this.groundGroup.add(poiGroup);
-
-      globePOIs.push({
-        group: poiGroup,
-        beacon: beacon,
-        name: def.name,
-        color: def.color,
-        icon: def.icon,
-        desc: def.desc,
-        discovered: false
-      });
-    }
-
-    // 6. Asynchronous KayKit asset populator
-    const gltfLoader = new GLTFLoader();
+    // Slimmed load for tile models only (props and POIs stripped).
     const loadedAssets: { [key: string]: THREE.Group } = {};
-
+    const gltfLoader = new GLTFLoader();
     const loadAsset = (name: string, path: string): Promise<void> => {
       return new Promise((resolve) => {
         gltfLoader.load(
@@ -1266,385 +875,524 @@ export class PlanetGenerator {
       });
     };
 
-    return Promise.all([
-      loadAsset("pine", "KayKit/decoration/nature/tree_single_A.gltf"),
-      loadAsset("deciduous", "KayKit/decoration/nature/tree_single_B.gltf"),
-      loadAsset("rockB", "KayKit/decoration/nature/rock_single_B.gltf"),
-      loadAsset("rockC", "KayKit/decoration/nature/rock_single_C.gltf"),
-      loadAsset("windmill", "KayKit/buildings/blue/building_windmill_blue.gltf"),
-      loadAsset("houseA_blue", "KayKit/buildings/blue/building_home_A_blue.gltf"),
-      loadAsset("houseA_red", "KayKit/buildings/red/building_home_A_red.gltf"),
-      loadAsset("houseA_green", "KayKit/buildings/green/building_home_A_green.gltf"),
-      loadAsset("houseA_yellow", "KayKit/buildings/yellow/building_home_A_yellow.gltf"),
-      loadAsset("houseB_blue", "KayKit/buildings/blue/building_home_B_blue.gltf"),
-      loadAsset("houseB_red", "KayKit/buildings/red/building_home_B_red.gltf"),
-      loadAsset("houseB_green", "KayKit/buildings/green/building_home_B_green.gltf"),
-      loadAsset("houseB_yellow", "KayKit/buildings/yellow/building_home_B_yellow.gltf"),
-      loadAsset("tower_blue", "KayKit/buildings/blue/building_tower_A_blue.gltf"),
-      loadAsset("tower_red", "KayKit/buildings/red/building_tower_A_red.gltf"),
-      loadAsset("well", "KayKit/buildings/blue/building_well_blue.gltf"),
-      loadAsset("waterlily", "KayKit/decoration/nature/waterlily_A.gltf"),
-      loadAsset("waterplant", "KayKit/decoration/nature/waterplant_A.gltf"),
-      loadAsset("tent", "KayKit/decoration/props/tent.gltf"),
-      loadAsset("barrel", "KayKit/decoration/props/barrel.gltf"),
-      loadAsset("target", "KayKit/decoration/props/target.gltf"),
+    const tileLoadPromises = [
       loadAsset("tileGrass", "KayKit/tiles/base/hex_grass.gltf"),
       loadAsset("tileWater", "KayKit/tiles/base/hex_water.gltf"),
-      loadAsset("tileSlope", "KayKit/tiles/base/hex_grass_sloped_low.gltf"),
-    ]).then(() => {
-      groundTileHolders.forEach((tileGroup) => {
-        const { isPentagon, biome, uIdx } = tileGroup.userData;
-        let model: THREE.Group | null = null;
+      loadAsset("tileSlopeLow", "KayKit/tiles/base/hex_grass_sloped_low.gltf"),
+      loadAsset("tileSlopeHigh", "KayKit/tiles/base/hex_grass_sloped_high.gltf"),
+      loadAsset("tileBottom", "KayKit/tiles/base/hex_grass_bottom.gltf"),
+      loadAsset("roadStraight", "KayKit/tiles/roads/hex_road_A.gltf"),
+      loadAsset("roadCurve", "KayKit/tiles/roads/hex_road_B.gltf"),
+      loadAsset("roadJunction", "KayKit/tiles/roads/hex_road_D.gltf"),
+      loadAsset("coastA", "KayKit/tiles/coast/waterless/hex_coast_A_waterless.gltf"),
+      loadAsset("coastB", "KayKit/tiles/coast/waterless/hex_coast_B_waterless.gltf"),
+      loadAsset("coastC", "KayKit/tiles/coast/waterless/hex_coast_C_waterless.gltf"),
+      loadAsset("coastD", "KayKit/tiles/coast/waterless/hex_coast_D_waterless.gltf"),
+      loadAsset("coastE", "KayKit/tiles/coast/waterless/hex_coast_E_waterless.gltf"),
+      loadAsset("riverStraight", "KayKit/tiles/rivers/hex_river_A.gltf"),
+      loadAsset("riverCurve", "KayKit/tiles/rivers/hex_river_A_curvy.gltf"),
+    ];
 
-        const tileInfo = tilesData[uIdx];
-        let cellScale = 7.5;
-        if (tileInfo && tileInfo.vertices && tileInfo.vertices.length > 0) {
-          const cornerNorm = tileInfo.vertices[0];
-          const centerNorm = tileInfo.center;
-          const centerPt = centerNorm.clone().multiplyScalar(planetRadius);
-          const cornerPt = cornerNorm.clone().multiplyScalar(planetRadius);
-          cellScale = centerPt.distanceTo(cornerPt) * 1.15;
-        }
+    const textureLoader = new THREE.TextureLoader();
+    const variantTextures: { [key: string]: THREE.Texture } = {};
+    const texturePromises = [
+      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Summer.png", (tex) => { variantTextures.summer = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Fall.png", (tex) => { variantTextures.fall = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Winter.png", (tex) => { variantTextures.winter = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval.png", (tex) => { variantTextures.base = tex; resolve(); }); }),
+    ];
 
-        if (isPentagon) {
-          if (biome === "mountain" && loadedAssets.pine) {
-            model = loadedAssets.pine.clone();
-            model.scale.setScalar(cellScale * 3.0);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                const color = child.material.color;
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0xf2f4f4);
-                  child.material.emissive.setHex(0xaaaaaa);
-                  child.material.emissiveIntensity = 0.25;
-                }
-              }
-            });
-          } else if (biome === "sand" && loadedAssets.rockB) {
-            model = loadedAssets.rockB.clone();
-            model.scale.setScalar(cellScale * 3.5);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                child.material.color.setHex(0xba4a00);
-              }
-            });
-          } else if (loadedAssets.tower_blue) {
-            model = loadedAssets.tower_blue.clone();
-            model.scale.setScalar(cellScale * 2.8);
+    // Nature decoration assets — loaded globally for all biomes/regions
+    const natureLoadPromises = [
+      // Mountains (pre-assembled peak props)
+      loadAsset("mountainA", "KayKit/decoration/nature/mountain_A.gltf"),
+      loadAsset("mountainB", "KayKit/decoration/nature/mountain_B.gltf"),
+      loadAsset("mountainC", "KayKit/decoration/nature/mountain_C.gltf"),
+      loadAsset("mountainAGrass", "KayKit/decoration/nature/mountain_A_grass.gltf"),
+      loadAsset("mountainBGrass", "KayKit/decoration/nature/mountain_B_grass.gltf"),
+      // Hills (rounded terrain bumps)
+      loadAsset("hillsA", "KayKit/decoration/nature/hills_A.gltf"),
+      loadAsset("hillsATrees", "KayKit/decoration/nature/hills_A_trees.gltf"),
+      loadAsset("hillsB", "KayKit/decoration/nature/hills_B.gltf"),
+      loadAsset("hillsBTrees", "KayKit/decoration/nature/hills_B_trees.gltf"),
+      loadAsset("hillsC", "KayKit/decoration/nature/hills_C.gltf"),
+      loadAsset("hillsCTrees", "KayKit/decoration/nature/hills_C_trees.gltf"),
+      loadAsset("hillSingleA", "KayKit/decoration/nature/hill_single_A.gltf"),
+      loadAsset("hillSingleB", "KayKit/decoration/nature/hill_single_B.gltf"),
+      // Rocks
+      loadAsset("rockA", "KayKit/decoration/nature/rock_single_A.gltf"),
+      loadAsset("rockB", "KayKit/decoration/nature/rock_single_B.gltf"),
+      loadAsset("rockC", "KayKit/decoration/nature/rock_single_C.gltf"),
+      loadAsset("rockD", "KayKit/decoration/nature/rock_single_D.gltf"),
+      loadAsset("rockE", "KayKit/decoration/nature/rock_single_E.gltf"),
+      // Trees — singles and groups
+      loadAsset("treeSmall", "KayKit/decoration/nature/tree_single_A.gltf"),
+      loadAsset("treeMedium", "KayKit/decoration/nature/tree_single_B.gltf"),
+      loadAsset("treesASmall", "KayKit/decoration/nature/trees_A_small.gltf"),
+      loadAsset("treesAMedium", "KayKit/decoration/nature/trees_A_medium.gltf"),
+      loadAsset("treesALarge", "KayKit/decoration/nature/trees_A_large.gltf"),
+      loadAsset("treesBSmall", "KayKit/decoration/nature/trees_B_small.gltf"),
+      loadAsset("treesBMedium", "KayKit/decoration/nature/trees_B_medium.gltf"),
+      // Water decorations
+      loadAsset("waterlilyA", "KayKit/decoration/nature/waterlily_A.gltf"),
+      loadAsset("waterplantA", "KayKit/decoration/nature/waterplant_A.gltf"),
+      // Additional nature — previously missing
+      loadAsset("hillSingleC", "KayKit/decoration/nature/hill_single_C.gltf"),
+      loadAsset("mountainCGrass", "KayKit/decoration/nature/mountain_C_grass.gltf"),
+      loadAsset("mountainAGrassTrees", "KayKit/decoration/nature/mountain_A_grass_trees.gltf"),
+      loadAsset("mountainBGrassTrees", "KayKit/decoration/nature/mountain_B_grass_trees.gltf"),
+      loadAsset("mountainCGrassTrees", "KayKit/decoration/nature/mountain_C_grass_trees.gltf"),
+      loadAsset("treesBLarge", "KayKit/decoration/nature/trees_B_large.gltf"),
+      loadAsset("waterlilyB", "KayKit/decoration/nature/waterlily_B.gltf"),
+      loadAsset("waterplantB", "KayKit/decoration/nature/waterplant_B.gltf"),
+      loadAsset("waterplantC", "KayKit/decoration/nature/waterplant_C.gltf"),
+      // Buildings — Green faction
+      loadAsset("home_A_green", "KayKit/buildings/green/building_home_A_green.gltf"),
+      loadAsset("home_B_green", "KayKit/buildings/green/building_home_B_green.gltf"),
+      loadAsset("windmill_green", "KayKit/buildings/green/building_windmill_green.gltf"),
+      loadAsset("market_green", "KayKit/buildings/green/building_market_green.gltf"),
+      loadAsset("church_green", "KayKit/buildings/green/building_church_green.gltf"),
+      loadAsset("well_green", "KayKit/buildings/green/building_well_green.gltf"),
+      loadAsset("lumbermill_green", "KayKit/buildings/green/building_lumbermill_green.gltf"),
+      loadAsset("watermill_green", "KayKit/buildings/green/building_watermill_green.gltf"),
+      loadAsset("tavern_green", "KayKit/buildings/green/building_tavern_green.gltf"),
+      loadAsset("blacksmith_green", "KayKit/buildings/green/building_blacksmith_green.gltf"),
+      loadAsset("tower_A_green", "KayKit/buildings/green/building_tower_A_green.gltf"),
+      loadAsset("castle_green", "KayKit/buildings/green/building_castle_green.gltf"),
+      loadAsset("mine_green", "KayKit/buildings/green/building_mine_green.gltf"),
+      loadAsset("barracks_green", "KayKit/buildings/green/building_barracks_green.gltf"),
+      loadAsset("archeryrange_green", "KayKit/buildings/green/building_archeryrange_green.gltf"),
+      // Buildings — Blue faction
+      loadAsset("home_A_blue", "KayKit/buildings/blue/building_home_A_blue.gltf"),
+      loadAsset("home_B_blue", "KayKit/buildings/blue/building_home_B_blue.gltf"),
+      loadAsset("windmill_blue", "KayKit/buildings/blue/building_windmill_blue.gltf"),
+      loadAsset("market_blue", "KayKit/buildings/blue/building_market_blue.gltf"),
+      loadAsset("church_blue", "KayKit/buildings/blue/building_church_blue.gltf"),
+      loadAsset("well_blue", "KayKit/buildings/blue/building_well_blue.gltf"),
+      loadAsset("lumbermill_blue", "KayKit/buildings/blue/building_lumbermill_blue.gltf"),
+      loadAsset("watermill_blue", "KayKit/buildings/blue/building_watermill_blue.gltf"),
+      loadAsset("tavern_blue", "KayKit/buildings/blue/building_tavern_blue.gltf"),
+      loadAsset("blacksmith_blue", "KayKit/buildings/blue/building_blacksmith_blue.gltf"),
+      loadAsset("tower_A_blue", "KayKit/buildings/blue/building_tower_A_blue.gltf"),
+      loadAsset("castle_blue", "KayKit/buildings/blue/building_castle_blue.gltf"),
+      loadAsset("mine_blue", "KayKit/buildings/blue/building_mine_blue.gltf"),
+      loadAsset("barracks_blue", "KayKit/buildings/blue/building_barracks_blue.gltf"),
+      loadAsset("archeryrange_blue", "KayKit/buildings/blue/building_archeryrange_blue.gltf"),
+      // Buildings — Red faction
+      loadAsset("home_A_red", "KayKit/buildings/red/building_home_A_red.gltf"),
+      loadAsset("home_B_red", "KayKit/buildings/red/building_home_B_red.gltf"),
+      loadAsset("windmill_red", "KayKit/buildings/red/building_windmill_red.gltf"),
+      loadAsset("market_red", "KayKit/buildings/red/building_market_red.gltf"),
+      loadAsset("church_red", "KayKit/buildings/red/building_church_red.gltf"),
+      loadAsset("well_red", "KayKit/buildings/red/building_well_red.gltf"),
+      loadAsset("lumbermill_red", "KayKit/buildings/red/building_lumbermill_red.gltf"),
+      loadAsset("watermill_red", "KayKit/buildings/red/building_watermill_red.gltf"),
+      loadAsset("tavern_red", "KayKit/buildings/red/building_tavern_red.gltf"),
+      loadAsset("blacksmith_red", "KayKit/buildings/red/building_blacksmith_red.gltf"),
+      loadAsset("tower_A_red", "KayKit/buildings/red/building_tower_A_red.gltf"),
+      loadAsset("castle_red", "KayKit/buildings/red/building_castle_red.gltf"),
+      loadAsset("mine_red", "KayKit/buildings/red/building_mine_red.gltf"),
+      loadAsset("barracks_red", "KayKit/buildings/red/building_barracks_red.gltf"),
+      loadAsset("archeryrange_red", "KayKit/buildings/red/building_archeryrange_red.gltf"),
+      // Buildings — Yellow faction
+      loadAsset("home_A_yellow", "KayKit/buildings/yellow/building_home_A_yellow.gltf"),
+      loadAsset("home_B_yellow", "KayKit/buildings/yellow/building_home_B_yellow.gltf"),
+      loadAsset("windmill_yellow", "KayKit/buildings/yellow/building_windmill_yellow.gltf"),
+      loadAsset("market_yellow", "KayKit/buildings/yellow/building_market_yellow.gltf"),
+      loadAsset("church_yellow", "KayKit/buildings/yellow/building_church_yellow.gltf"),
+      loadAsset("well_yellow", "KayKit/buildings/yellow/building_well_yellow.gltf"),
+      loadAsset("lumbermill_yellow", "KayKit/buildings/yellow/building_lumbermill_yellow.gltf"),
+      loadAsset("watermill_yellow", "KayKit/buildings/yellow/building_watermill_yellow.gltf"),
+      loadAsset("tavern_yellow", "KayKit/buildings/yellow/building_tavern_yellow.gltf"),
+      loadAsset("blacksmith_yellow", "KayKit/buildings/yellow/building_blacksmith_yellow.gltf"),
+      loadAsset("tower_A_yellow", "KayKit/buildings/yellow/building_tower_A_yellow.gltf"),
+      loadAsset("castle_yellow", "KayKit/buildings/yellow/building_castle_yellow.gltf"),
+      loadAsset("mine_yellow", "KayKit/buildings/yellow/building_mine_yellow.gltf"),
+      loadAsset("barracks_yellow", "KayKit/buildings/yellow/building_barracks_yellow.gltf"),
+      loadAsset("archeryrange_yellow", "KayKit/buildings/yellow/building_archeryrange_yellow.gltf"),
+      // Buildings — Neutral (shared across regions)
+      loadAsset("building_grain", "KayKit/buildings/neutral/building_grain.gltf"),
+      loadAsset("building_dirt", "KayKit/buildings/neutral/building_dirt.gltf"),
+      loadAsset("fence_wood", "KayKit/buildings/neutral/fence_wood_straight.gltf"),
+      loadAsset("fence_stone", "KayKit/buildings/neutral/fence_stone_straight.gltf"),
+      // Props — scattered around settlements
+      loadAsset("barrel", "KayKit/decoration/props/barrel.gltf"),
+      loadAsset("crate_A_big", "KayKit/decoration/props/crate_A_big.gltf"),
+      loadAsset("crate_B_small", "KayKit/decoration/props/crate_B_small.gltf"),
+      loadAsset("crate_open", "KayKit/decoration/props/crate_open.gltf"),
+      loadAsset("sack", "KayKit/decoration/props/sack.gltf"),
+      loadAsset("resource_lumber", "KayKit/decoration/props/resource_lumber.gltf"),
+      loadAsset("resource_stone", "KayKit/decoration/props/resource_stone.gltf"),
+      loadAsset("bucket_water", "KayKit/decoration/props/bucket_water.gltf"),
+      loadAsset("wheelbarrow", "KayKit/decoration/props/wheelbarrow.gltf"),
+      loadAsset("tent", "KayKit/decoration/props/tent.gltf"),
+      loadAsset("target", "KayKit/decoration/props/target.gltf"),
+      loadAsset("weaponrack", "KayKit/decoration/props/weaponrack.gltf"),
+      loadAsset("flag_green", "KayKit/decoration/props/flag_green.gltf"),
+      loadAsset("flag_blue", "KayKit/decoration/props/flag_blue.gltf"),
+      loadAsset("flag_red", "KayKit/decoration/props/flag_red.gltf"),
+      loadAsset("flag_yellow", "KayKit/decoration/props/flag_yellow.gltf"),
+    ];
+
+    return Promise.all([...tileLoadPromises, ...texturePromises, ...natureLoadPromises]).then(() => {
+      // Define pathfinding inside the then scope
+      const findPath = (startIdx: number, endIdx: number, allowedTiles: Set<number>): number[] | null => {
+        const queue: number[] = [startIdx];
+        const visited = new Set<number>([startIdx]);
+        const parent = new Map<number, number>();
+
+        while (queue.length > 0) {
+          const curr = queue.shift()!;
+          if (curr === endIdx) {
+            const path: number[] = [];
+            let temp = curr;
+            while (temp !== startIdx) {
+              path.push(temp);
+              temp = parent.get(temp)!;
+            }
+            path.push(startIdx);
+            return path.reverse();
           }
-        } else {
-          if (biome === "water") {
-            // Empty water core
-          } else if (biome === "mountain" || biome === "hill") {
-            const useSlope = Math.random() < 0.25;
-            const tileModel = useSlope ? loadedAssets.tileSlope : loadedAssets.tileGrass;
-            if (tileModel) {
-              model = tileModel.clone();
-              model.scale.setScalar(cellScale);
-            }
-          } else {
-            if (loadedAssets.tileGrass) {
-              model = loadedAssets.tileGrass.clone();
-              model.scale.setScalar(cellScale);
+
+          const neighbors = groundTileHolders[curr].userData.neighbors || [];
+          for (const n of neighbors) {
+            if (!visited.has(n) && (allowedTiles.has(n) || n === endIdx)) {
+              visited.add(n);
+              parent.set(n, curr);
+              queue.push(n);
             }
           }
         }
+        return null;
+      };
 
-        if (model) {
-          model.traverse((child: any) => {
-            if (child.isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-              child.material = child.material.clone();
-              
-              const color = child.material.color;
-              
-              if (biome === "mountain") {
-                if (color && (color.g > color.r || color.r > 0.8)) {
-                  child.material.color.setHex(0xf2f4f4);
-                }
-              } else if (biome === "sand") {
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0xf5b041);
-                } else if (color) {
-                  child.material.color.setHex(0xba4a00);
-                }
-              } else if (biome === "hill") {
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0x196f3d);
-                } else if (color) {
-                  child.material.color.setHex(0x4a235a);
-                }
-              } else {
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0x52be80);
-                } else if (color) {
-                  child.material.color.setHex(0x5c4033);
-                }
-              }
-            }
-          });
-          tileGroup.add(model);
+      // 1. Identify all tiles in Region 0 for roads
+      const region0Indices: number[] = [];
+      groundTileHolders.forEach((group, idx) => {
+        if (group.userData.logicalRegion === 'region_0') {
+          const biome = group.userData.biome;
+          if (biome === 'grass' || biome === 'hill') {
+            region0Indices.push(idx);
+          }
         }
       });
 
-      propHolders.forEach((propBase) => {
-        const { selectedType, biome, cellScale, baseScale } = propBase.userData;
-        let model: THREE.Group | null = null;
-        const scaleVal = (cellScale || 7.5) * (baseScale || 1.0);
+      const region0Set = new Set(region0Indices);
+      const roadTiles = new Set<number>();
 
-        if (selectedType === "pine") {
-          if (loadedAssets.pine) {
-            model = loadedAssets.pine.clone();
-            model.scale.setScalar(scaleVal * 2.8);
-            if (biome === "mountain") {
-              model.traverse((child: any) => {
-                if (child.isMesh) {
-                  child.material = child.material.clone();
-                  const color = child.material.color;
-                  if (color && color.g > color.r && color.g > color.b) {
-                    child.material.color.setHex(0xf2f4f4);
-                    child.material.emissive.setHex(0xaaaaaa);
-                    child.material.emissiveIntensity = 0.25;
-                    this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.25, type: "snow" });
-                  }
-                }
-              });
-            }
-          }
-        } else if (selectedType === "jungle_tree") {
-          if (loadedAssets.deciduous) {
-            model = loadedAssets.deciduous.clone();
-            model.scale.setScalar(scaleVal * 2.8);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                const color = child.material.color;
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0x196f3d);
-                  child.material.emissive.setHex(0x0e3a1f);
-                  child.material.emissiveIntensity = 0.25;
-                  this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.25, type: "jungle" });
-                }
-              }
-            });
-          }
-        } else if (selectedType === "cherry_blossom") {
-          if (loadedAssets.deciduous) {
-            model = loadedAssets.deciduous.clone();
-            model.scale.setScalar(scaleVal * 2.6);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                const color = child.material.color;
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0xff69b4);
-                  child.material.emissive.setHex(0x440011);
-                  child.material.emissiveIntensity = 0.35;
-                  this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.35, type: "cherry" });
-                }
-              }
-            });
-          }
-        } else if (selectedType === "autumn_birch") {
-          if (loadedAssets.deciduous) {
-            model = loadedAssets.deciduous.clone();
-            model.scale.setScalar(scaleVal * 2.6);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                const color = child.material.color;
-                if (color && color.g > color.r) {
-                  child.material.color.setHex(0xe67e22);
-                  child.material.emissive.setHex(0x3e1804);
-                  child.material.emissiveIntensity = 0.2;
-                  this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.2, type: "autumn" });
-                }
-              }
-            });
-          }
-        } else if (selectedType === "rock") {
-          const rockModel = Math.random() < 0.5 ? loadedAssets.rockB : loadedAssets.rockC;
-          if (rockModel) {
-            model = rockModel.clone();
-            model.scale.setScalar(scaleVal * 2.4);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                if (biome === "sand") {
-                  child.material.color.setHex(0xba4a00);
-                } else if (biome === "mountain") {
-                  child.material.color.setHex(0xd5dbdb);
-                }
-              }
-            });
-          }
-        } else if (selectedType === "waterlily") {
-          if (loadedAssets.waterlily) {
-            model = loadedAssets.waterlily.clone();
-            model.scale.setScalar(scaleVal * 1.8);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                child.material.emissive = new THREE.Color(0x00ffcc);
-                child.material.emissiveIntensity = 0.25;
-                this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.25, type: "waterlily" });
-              }
-            });
-          }
-        } else if (selectedType === "waterplant") {
-          if (loadedAssets.waterplant) {
-            model = loadedAssets.waterplant.clone();
-            model.scale.setScalar(scaleVal * 1.8);
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                child.material = child.material.clone();
-                child.material.emissive = new THREE.Color(0x00ccaa);
-                child.material.emissiveIntensity = 0.2;
-                this.bioluminescentMeshes.push({ mesh: child, baseIntensity: 0.2, type: "waterplant" });
-              }
-            });
-          }
-        } else if (selectedType === "windmill") {
-          if (loadedAssets.windmill) {
-            model = loadedAssets.windmill.clone();
-            model.scale.setScalar(scaleVal * 2.8);
-            
-            let bladesGroup: THREE.Object3D | null = null;
-            model.traverse((child) => {
-              if (child.name.toLowerCase().includes("propeller") || 
-                  child.name.toLowerCase().includes("rotor") || 
-                  child.name.toLowerCase().includes("wheel") || 
-                  child.name.toLowerCase().includes("blade") || 
-                  child.name.toLowerCase().includes("sail")) {
-                bladesGroup = child;
-              }
-            });
-            if (!bladesGroup) {
-              model.traverse((child) => {
-                if (child.name.toLowerCase().includes("windmill") && !child.name.toLowerCase().includes("tower") && !child.name.toLowerCase().includes("base")) {
-                  bladesGroup = child;
-                }
-              });
-            }
-            if (bladesGroup) {
-              this.spinningBlades.push(bladesGroup);
-            }
+      // Select 3-4 hubs in Region 0
+      const hubs: number[] = [];
+      if (region0Indices.length >= 3) {
+        hubs.push(region0Indices[0]);
+        hubs.push(region0Indices[Math.floor(region0Indices.length / 2)]);
+        hubs.push(region0Indices[region0Indices.length - 1]);
+        if (region0Indices.length >= 5) {
+          hubs.push(region0Indices[Math.floor(region0Indices.length * 0.75)]);
+        }
+      }
 
-            if (loadedAssets.barrel && Math.random() < 0.5) {
-              const barrel = loadedAssets.barrel.clone();
-              barrel.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              barrel.position.set(Math.cos(angle) * 1.6 * scaleVal, 0, Math.sin(angle) * 1.6 * scaleVal);
-              propBase.add(barrel);
+      // Run BFS to connect them in sequence
+      for (let i = 0; i < hubs.length - 1; i++) {
+        const path = findPath(hubs[i], hubs[i + 1], region0Set);
+        if (path) {
+          path.forEach(idx => roadTiles.add(idx));
+        }
+      }
+
+      // 1b. Generate rivers in ALL regions — find mountain/hill sources flowing toward water
+      const riverTiles = new Set<number>();
+      
+      // Scan all tiles globally for mountain/hill sources near water
+      const allSources: number[] = [];
+      groundTileHolders.forEach((group, idx) => {
+        const b = group.userData.biome;
+        if (b === 'mountain' || b === 'hill') {
+          allSources.push(idx);
+        }
+      });
+
+      // Shuffle sources deterministically and pick up to 15 river starts across the planet
+      for (let i = allSources.length - 1; i > 0; i--) {
+        const j = Math.floor(seededRandom() * (i + 1));
+        [allSources[i], allSources[j]] = [allSources[j], allSources[i]];
+      }
+      
+      // Flow downhill from each source to water
+      allSources.slice(0, 15).forEach((srcIdx) => {
+        let curr = srcIdx;
+        const visited = new Set<number>([curr]);
+        
+        for (let step = 0; step < 12; step++) {
+          riverTiles.add(curr);
+          
+          const neighbors = groundTileHolders[curr].userData.neighbors || [];
+          let bestNext = -1;
+          let lowestDisp = groundTileHolders[curr].userData.displacement || 0;
+          
+          for (const n of neighbors) {
+            if (visited.has(n)) continue;
+            const nBiome = groundTileHolders[n].userData.biome;
+            if (nBiome === 'water') {
+              bestNext = n;
+              break;
+            }
+            const nDisp = groundTileHolders[n].userData.displacement || 0;
+            if (nDisp < lowestDisp) {
+              lowestDisp = nDisp;
+              bestNext = n;
             }
           }
-        } else if (selectedType === "cottage") {
-          const houses = [
-            loadedAssets.houseA_blue, loadedAssets.houseA_red, loadedAssets.houseA_green, loadedAssets.houseA_yellow,
-            loadedAssets.houseB_blue, loadedAssets.houseB_red, loadedAssets.houseB_green, loadedAssets.houseB_yellow
-          ].filter(Boolean);
-          if (houses.length > 0) {
-            const houseModel = houses[Math.floor(Math.random() * houses.length)];
-            model = houseModel.clone();
-            model.scale.setScalar(scaleVal * 2.4);
-
-            if (loadedAssets.barrel && Math.random() < 0.6) {
-              const barrel = loadedAssets.barrel.clone();
-              barrel.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              const dist = 1.6 + Math.random() * 0.2;
-              barrel.position.set(Math.cos(angle) * dist * scaleVal, 0, Math.sin(angle) * dist * scaleVal);
-              barrel.rotation.y = Math.random() * Math.PI;
-              propBase.add(barrel);
+          
+          if (bestNext === -1 || groundTileHolders[bestNext].userData.biome === 'water') {
+            if (bestNext !== -1) {
+              riverTiles.add(bestNext);
             }
-            if (loadedAssets.target && Math.random() < 0.3) {
-              const target = loadedAssets.target.clone();
-              target.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              const dist = 1.8 + Math.random() * 0.2;
-              target.position.set(Math.cos(angle) * dist * scaleVal, 0.05 * scaleVal, Math.sin(angle) * dist * scaleVal);
-              target.rotation.y = Math.random() * Math.PI;
-              propBase.add(target);
-            }
+            break;
           }
-        } else if (selectedType === "tower") {
-          const towers = [loadedAssets.tower_blue, loadedAssets.tower_red].filter(Boolean);
-          if (towers.length > 0) {
-            const towerModel = towers[Math.floor(Math.random() * towers.length)];
-            model = towerModel.clone();
-            model.scale.setScalar(scaleVal * 2.8);
+          curr = bestNext;
+          visited.add(curr);
+        }
+      });
 
-            if (loadedAssets.barrel && Math.random() < 0.6) {
-              const barrel = loadedAssets.barrel.clone();
-              barrel.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              barrel.position.set(Math.cos(angle) * 1.6 * scaleVal, 0, Math.sin(angle) * 1.6 * scaleVal);
-              propBase.add(barrel);
-            }
+      // 2. Tile surface is handled by the merged procedural base mesh (above).
+      // No GLTF hex models are placed as base tiles — only decoration props below.
+      this.tileGroups = groundTileHolders;
+
+      // === Global Biome Decoration: Place nature props on ALL tiles ===
+      const placePropOnTile = (tileGroup: THREE.Group, assetKey: string, scaleBase: number, tangentScale = 4.0) => {
+        if (!loadedAssets[assetKey]) return;
+        const prop = loadedAssets[assetKey].clone();
+        prop.scale.setScalar(scaleBase * (2.5 + seededRandom() * 1.5));
+
+        const localX = (seededRandom() - 0.5) * tangentScale;
+        const localZ = (seededRandom() - 0.5) * tangentScale;
+        prop.position.set(localX, 0.05, localZ);
+        prop.rotation.y = seededRandom() * Math.PI * 2;
+
+        prop.traverse((child: any) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
           }
-        } else if (selectedType === "well") {
-          if (loadedAssets.well) {
-            model = loadedAssets.well.clone();
-            model.scale.setScalar(scaleVal * 2.2);
+        });
+        tileGroup.add(prop);
+      };
 
-            if (loadedAssets.barrel && Math.random() < 0.5) {
-              const barrel = loadedAssets.barrel.clone();
-              barrel.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              barrel.position.set(Math.cos(angle) * 1.25 * scaleVal, 0, Math.sin(angle) * 1.25 * scaleVal);
-              propBase.add(barrel);
-            }
+      const mountainModels = ["mountainA", "mountainB", "mountainC", "mountainAGrass", "mountainBGrass", "mountainCGrass", "mountainAGrassTrees", "mountainBGrassTrees", "mountainCGrassTrees"];
+      const hillModels = ["hillsATrees", "hillsBTrees", "hillsCTrees", "hillsA", "hillsB", "hillsC"];
+      const hillSingleModels = ["hillSingleA", "hillSingleB", "hillSingleC"];
+      const rockModels = ["rockA", "rockB", "rockC", "rockD", "rockE"];
+      const treeSmallModels = ["treeSmall", "treeMedium"];
+      const treeGroupModels = ["treesASmall", "treesAMedium", "treesALarge", "treesBSmall", "treesBMedium", "treesBLarge"];
+      const genericProps = ["barrel", "crate_A_big", "crate_B_small", "crate_open", "sack", "resource_lumber", "resource_stone", "bucket_water", "wheelbarrow"];
+
+      groundTileHolders.forEach((tileGroup, uIdx) => {
+        const biome = tileGroup.userData.biome;
+        if (!biome) return;
+
+        // Skip road and river tiles — keep them clear
+        const isRoad = roadTiles.has(uIdx);
+        const isRiver = riverTiles.has(uIdx);
+        if (isRoad || isRiver) return;
+
+        const pick = (arr: string[]) => arr[Math.floor(seededRandom() * arr.length)];
+
+        if (biome === "mountain") {
+          // Mountain peaks: 70% chance of a peak prop (the hero assets!)
+          if (seededRandom() < 0.70) {
+            placePropOnTile(tileGroup, pick(mountainModels), 1.8, 2.0);
           }
-        } else if (selectedType === "tent") {
-          if (loadedAssets.tent) {
-            model = loadedAssets.tent.clone();
-            model.scale.setScalar(scaleVal * 2.4);
+          // Occasional rocks scattered around the peak
+          if (seededRandom() < 0.3) {
+            placePropOnTile(tileGroup, pick(rockModels), 1.5, 3.5);
+          }
+        } else if (biome === "hill") {
+          // Hill decorations: bumpy terrain with trees
+          if (seededRandom() < 0.55) {
+            placePropOnTile(tileGroup, pick(hillModels), 1.6, 2.5);
+          } else if (seededRandom() < 0.35) {
+            placePropOnTile(tileGroup, pick(hillSingleModels), 1.8, 3.0);
+          }
+          // Scattered trees on hills
+          if (seededRandom() < 0.4) {
+            placePropOnTile(tileGroup, pick(treeSmallModels), 1.3, 5.0);
+          }
+        } else if (biome === "grass") {
+          // Grass: trees and tree groups — varying density for organic feel
+          if (seededRandom() < 0.45) {
+            placePropOnTile(tileGroup, pick(treeGroupModels), 1.4, 3.5);
+          }
+          if (seededRandom() < 0.35) {
+            placePropOnTile(tileGroup, pick(treeSmallModels), 1.2, 5.0);
+          }
+          // Occasional rocks
+          if (seededRandom() < 0.08) {
+            placePropOnTile(tileGroup, pick(rockModels), 1.0, 4.0);
+          }
+        } else if (biome === "sand") {
+          // Desert: sparse rocks, occasional cacti-like rock clusters
+          if (seededRandom() < 0.35) {
+            placePropOnTile(tileGroup, pick(rockModels), 1.3, 4.0);
+          }
+          if (seededRandom() < 0.15) {
+            placePropOnTile(tileGroup, pick(rockModels), 0.8, 5.0);
+          }
+        } else if (biome === "water") {
+          // Shallow water: occasional waterlilies and waterplants
+          const waterDecoLilies = ["waterlilyA", "waterlilyB"];
+          const waterDecoPlants = ["waterplantA", "waterplantB", "waterplantC"];
+          if (seededRandom() < 0.08) {
+            placePropOnTile(tileGroup, pick(waterDecoLilies), 2.0, 3.0);
+          }
+          if (seededRandom() < 0.05) {
+            placePropOnTile(tileGroup, pick(waterDecoPlants), 1.8, 3.0);
+          }
+        }
 
-            if (loadedAssets.barrel && Math.random() < 0.5) {
-              const barrel = loadedAssets.barrel.clone();
-              barrel.scale.setScalar(scaleVal * 0.4);
-              const angle = Math.random() * Math.PI * 2;
-              barrel.position.set(Math.cos(angle) * 1.35 * scaleVal, 0, Math.sin(angle) * 1.35 * scaleVal);
-              propBase.add(barrel);
+        // Coast-adjacent land tiles: add rocks along the shore
+        if (biome !== "water") {
+          const neighbors = tileGroup.userData.neighbors || [];
+          const waterNeighborCount = neighbors.filter((n: number) => groundTileHolders[n]?.userData.biome === "water").length;
+          if (waterNeighborCount > 0 && seededRandom() < 0.3) {
+            placePropOnTile(tileGroup, pick(rockModels), 1.0, 3.0);
+          }
+        }
+      });
+
+      // === Region Config: faction colors, building mixes, and placement densities ===
+      const REGION_CONFIG: Record<string, {
+        color: string;
+        buildings: string[];   // building type basenames (suffixed with _color at placement)
+        bigBuildings: string[]; // rarer landmark buildings
+        buildingChance: number;
+        flagColor: string;
+      }> = {
+        region_0: {
+          color: 'green',
+          buildings: ['home_A', 'home_B', 'windmill', 'market', 'church', 'well', 'lumbermill', 'watermill'],
+          bigBuildings: ['castle', 'tavern'],
+          buildingChance: 0.30,
+          flagColor: 'green',
+        },
+        region_1: {
+          color: 'blue',
+          buildings: ['home_A', 'home_B', 'market', 'tavern', 'church', 'well', 'watermill'],
+          bigBuildings: ['castle', 'tower_A'],
+          buildingChance: 0.25,
+          flagColor: 'blue',
+        },
+        region_2: {
+          color: 'red',
+          buildings: ['home_A', 'home_B', 'barracks', 'blacksmith', 'tower_A', 'archeryrange', 'well'],
+          bigBuildings: ['castle'],
+          buildingChance: 0.28,
+          flagColor: 'red',
+        },
+        region_3: {
+          color: 'yellow',
+          buildings: ['home_A', 'home_B', 'market', 'tavern', 'windmill', 'well', 'lumbermill'],
+          bigBuildings: ['castle', 'church'],
+          buildingChance: 0.25,
+          flagColor: 'yellow',
+        },
+        region_4: {
+          color: 'blue',
+          buildings: ['home_A', 'home_B', 'barracks', 'tower_A', 'blacksmith', 'mine', 'well'],
+          bigBuildings: ['castle'],
+          buildingChance: 0.22,
+          flagColor: 'blue',
+        },
+        region_5: {
+          color: 'red',
+          buildings: ['home_A', 'home_B', 'mine', 'blacksmith', 'barracks', 'archeryrange', 'well'],
+          bigBuildings: ['castle', 'tower_A'],
+          buildingChance: 0.20,
+          flagColor: 'red',
+        },
+        region_6: {
+          color: 'green',
+          buildings: ['home_A', 'home_B', 'lumbermill', 'windmill', 'watermill', 'well', 'church'],
+          bigBuildings: ['tavern'],
+          buildingChance: 0.28,
+          flagColor: 'green',
+        },
+        region_7: {
+          color: 'yellow',
+          buildings: ['home_A', 'home_B', 'market', 'tavern', 'well', 'windmill'],
+          bigBuildings: ['castle', 'church'],
+          buildingChance: 0.22,
+          flagColor: 'yellow',
+        },
+        region_8: {
+          color: 'green',
+          buildings: ['home_A', 'home_B', 'windmill', 'lumbermill', 'well', 'watermill'],
+          bigBuildings: ['church'],
+          buildingChance: 0.25,
+          flagColor: 'green',
+        },
+      };
+
+      // === Per-Region Building & Prop Placement ===
+      groundTileHolders.forEach((tileGroup, uIdx) => {
+        const regionId = tileGroup.userData.logicalRegion;
+        const config = REGION_CONFIG[regionId];
+        if (!config) return;
+
+        const biome = tileGroup.userData.biome;
+        if (biome !== 'grass' && biome !== 'hill') return;
+        if (roadTiles.has(uIdx) || riverTiles.has(uIdx)) return;
+
+        const pick = (arr: string[]) => arr[Math.floor(seededRandom() * arr.length)];
+
+        // Place buildings at configured density
+        if (seededRandom() < config.buildingChance) {
+          // 10% chance of a landmark (castle, tower, etc.), 90% normal building
+          const isLandmark = seededRandom() < 0.10 && config.bigBuildings.length > 0;
+          const buildingType = isLandmark ? pick(config.bigBuildings) : pick(config.buildings);
+          const assetKey = `${buildingType}_${config.color}`;
+
+          if (loadedAssets[assetKey]) {
+            const scale = isLandmark ? 2.2 : 1.8;
+            placePropOnTile(tileGroup, assetKey, scale, 3.5);
+
+            // Scatter 1-2 props around the building for life
+            if (seededRandom() < 0.50) {
+              placePropOnTile(tileGroup, pick(genericProps), 0.8, 4.5);
+            }
+            if (seededRandom() < 0.25) {
+              placePropOnTile(tileGroup, pick(genericProps), 0.7, 5.0);
+            }
+            // Faction flag near buildings (20% chance)
+            if (seededRandom() < 0.20) {
+              placePropOnTile(tileGroup, `flag_${config.flagColor}`, 1.0, 4.0);
             }
           }
         }
 
-        if (model) {
-          if (selectedType === "cottage" || selectedType === "tower" || selectedType === "well" || selectedType === "windmill") {
-            model.traverse((child: any) => {
-              if (child.isMesh) {
-                const name = child.name.toLowerCase();
-                const color = child.material?.color;
-                if (
-                  name.includes("window") || 
-                  name.includes("glass") || 
-                  name.includes("lantern") || 
-                  name.includes("light") ||
-                  name.includes("glow") ||
-                  (color && color.r > 0.8 && color.g > 0.6 && color.b < 0.4)
-                ) {
-                  child.material = child.material.clone();
-                  child.material.emissive.setHex(0xff9911);
-                  child.material.emissiveIntensity = 0.0;
-                  this.glowingWindows.push(child);
-                }
-              }
-            });
-          }
+        // Biome-specific prop scatter (even on tiles without buildings)
+        if (biome === 'grass' && seededRandom() < 0.06) {
+          placePropOnTile(tileGroup, pick(["barrel", "sack", "crate_B_small"]), 0.7, 5.0);
+        }
+        if (biome === 'hill' && seededRandom() < 0.05) {
+          placePropOnTile(tileGroup, pick(["resource_lumber", "resource_stone", "bucket_water"]), 0.8, 4.5);
+        }
+      });
 
-          model.traverse((child: any) => {
-            if (child.isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
-          });
-          propBase.add(model);
+      // Mountain-specific props: tents and resource piles near mines
+      groundTileHolders.forEach((tileGroup, uIdx) => {
+        const biome = tileGroup.userData.biome;
+        if (biome !== 'mountain' && biome !== 'sand') return;
+        if (roadTiles.has(uIdx) || riverTiles.has(uIdx)) return;
+
+        if (biome === 'mountain' && seededRandom() < 0.06) {
+          placePropOnTile(tileGroup, "resource_stone", 0.9, 4.0);
+        }
+        if (biome === 'sand' && seededRandom() < 0.04) {
+          const pick = (arr: string[]) => arr[Math.floor(seededRandom() * arr.length)];
+          placePropOnTile(tileGroup, pick(["tent", "target", "weaponrack"]), 1.0, 4.0);
         }
       });
     });
   }
 }
+

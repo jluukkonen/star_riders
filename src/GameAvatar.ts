@@ -357,7 +357,10 @@ export class GameAvatar {
     spinAngle: number = 0,
     yVelocity: number = 0,
     state: "normal" | "crashed" | "victory" = "normal",
-    isDrifting: boolean = false
+    isDrifting: boolean = false,
+    isClimbingAir: boolean = false,
+    isDescendingAir: boolean = false,
+    isSustainedAirCruise: boolean = false
   ) {
     if (this.proceduralAvatar) {
       this.proceduralAvatar.update(
@@ -369,7 +372,10 @@ export class GameAvatar {
         spinAngle,
         yVelocity,
         state,
-        isDrifting
+        isDrifting,
+        isClimbingAir,
+        isDescendingAir,
+        isSustainedAirCruise
       );
       return;
     }
@@ -464,13 +470,29 @@ export class GameAvatar {
       scaleMultY = 0.68;
       scaleMultZ = 1.25;
     } else if (isAirborne) {
-      if (yVelocity < -2.0) {
-        // Broad air-resistance gliding pose
+      if (isClimbingAir || yVelocity > 1.5) {
+        // Active climbing / ascending sustained flight
+        scaleMultX = 0.94;
+        scaleMultY = 1.16;
+        scaleMultZ = 0.94;
+      } else if (isDescendingAir || yVelocity < -1.5) {
+        // Active descending / diving tuck
+        scaleMultX = 1.04;
+        scaleMultY = 0.86;
+        scaleMultZ = 1.04;
+      } else if (isSustainedAirCruise) {
+        // Sustained level air cruise (relaxed forward flight)
+        const cruiseBob = Math.sin(this.time * 5.5) * 0.03;
+        scaleMultX = 0.97;
+        scaleMultY = 1.03 + cruiseBob * 0.8;
+        scaleMultZ = 0.97;
+      } else if (yVelocity < -2.0) {
+        // Broad air-resistance gliding pose (transient fast fall)
         scaleMultX = 1.08;
         scaleMultY = 0.92;
         scaleMultZ = 1.08;
       } else {
-        // High elastic vertical stretch proportional to velocity
+        // High elastic vertical stretch proportional to velocity (transient jump)
         const velocityStretch = Math.min(Math.abs(yVelocity) * 0.05, 0.2);
         scaleMultX = 0.88 - velocityStretch;
         scaleMultY = 1.12 + velocityStretch;
@@ -500,7 +522,19 @@ export class GameAvatar {
       // Tilting & Bank roll feedback (Leaning into turns)
       // Cube pets also lean smoothly!
       const targetRoll = bankAngle * -0.3; // subtle roll
-      const targetPitch = isAirborne ? (yVelocity > 0 ? -0.15 : 0.1) : 0; // look up when ascending, down when descending
+
+      // Enhanced pitch for air movement (climb / cruise / descend)
+      let targetPitch = 0;
+      if (isClimbingAir || yVelocity > 1.5) {
+        targetPitch = -0.22; // nose up effort when climbing
+      } else if (isDescendingAir || yVelocity < -1.5) {
+        targetPitch = 0.18; // nose down tuck when descending
+      } else if (isSustainedAirCruise) {
+        targetPitch = -0.08; // gentle nose-up attitude for level air cruise
+      } else if (isAirborne) {
+        targetPitch = yVelocity > 0 ? -0.15 : 0.1;
+      }
+
       const targetYaw = 0 + (isDrifting ? -bankAngle * 0.4 : 0); // yaw offset when sliding
 
       this.activeGLBMesh.rotation.z = THREE.MathUtils.lerp(this.activeGLBMesh.rotation.z, targetRoll, 10 * deltaTime);
