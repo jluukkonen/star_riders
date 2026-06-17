@@ -459,6 +459,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
     baseY: number;
     bounceOffset: number;
     rotSpeed: { x: number; y: number; z: number };
+    lastLODState: number;
   }[] = [];
 
   private gltfLoader = new GLTFLoader();
@@ -619,6 +620,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
           y: 0.8 + Math.random() * 1.2,
           z: 0.3 + Math.random() * 0.5,
         },
+        lastLODState: -1,
       });
     }
 
@@ -629,7 +631,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
       const sessionToken = Math.random();
       (parent as any)._neonSentinelSession = sessionToken;
       this.gltfLoader.load(
-        "/Meshy_AI_Neon_Quantum_Sentinel_0614142055_texture.glb",
+        "Meshy_AI_Neon_Quantum_Sentinel_0614142055_texture.glb",
         (gltf) => {
           if ((parent as any)._neonSentinelSession !== sessionToken) return;
 
@@ -644,8 +646,8 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
 
           this.instancedMeshes = sourceMeshes.map((mesh) => {
             const matClone = Array.isArray(mesh.material)
-              ? mesh.material.map((m) => m.clone())
-              : mesh.material.clone();
+               ? mesh.material.map((m) => m.clone())
+               : mesh.material.clone();
 
             const materials = Array.isArray(matClone) ? matClone : [matClone];
             materials.forEach((mat: any) => {
@@ -682,6 +684,7 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
     const playerPos = player.position || new THREE.Vector3(0, 0, 0);
     const lodThreshold = 350;
     const dummy = new THREE.Object3D();
+    let instancedMeshesChanged = false;
 
     for (let i = 0; i < this.list.length; i++) {
       const item = this.list[i];
@@ -704,7 +707,9 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
       const dist = playerPos.distanceTo(item.mesh.position);
 
       // 4. Smooth LOD and Loading Toggle
-      if (this.gltfLoaded && dist < lodThreshold && this.instancedMeshes.length > 0) {
+      const targetLOD = (this.gltfLoaded && dist < lodThreshold && this.instancedMeshes.length > 0) ? 1 : 0;
+
+      if (targetLOD === 1) {
         // High LOD: Show beautiful glowing GLB Neon Quantum Sentinel, hide simple procedural crystal
         item.mesh.children[0].visible = false;
         item.mesh.children[1].visible = false;
@@ -717,20 +722,25 @@ export class HoveringPolyhedraSystem implements TrackSubsystem {
         for (let m = 0; m < this.instancedMeshes.length; m++) {
           this.instancedMeshes[m].setMatrixAt(i, dummy.matrix);
         }
+        instancedMeshesChanged = true;
       } else {
         // Low LOD / Placeholder: Show procedural crystal
         item.mesh.children[0].visible = true;
         item.mesh.children[1].visible = true;
 
-        if (this.gltfLoaded) {
-          for (let m = 0; m < this.instancedMeshes.length; m++) {
-            this.instancedMeshes[m].setMatrixAt(i, this.invisibleMatrix);
+        if (item.lastLODState !== 0) {
+          if (this.gltfLoaded) {
+            for (let m = 0; m < this.instancedMeshes.length; m++) {
+              this.instancedMeshes[m].setMatrixAt(i, this.invisibleMatrix);
+            }
           }
+          instancedMeshesChanged = true;
         }
       }
+      item.lastLODState = targetLOD;
     }
 
-    if (this.gltfLoaded) {
+    if (this.gltfLoaded && instancedMeshesChanged) {
       for (const instMesh of this.instancedMeshes) {
         instMesh.instanceMatrix.needsUpdate = true;
         if (instMesh.computeBoundingSphere) {
@@ -765,6 +775,7 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
     lastLap?: number;
     lastSpeed?: number;
     lastDrawTime?: number;
+    lastLODState?: number;
   }[] = [];
 
   private gateLoader = new GLTFLoader();
@@ -1064,6 +1075,7 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
         lastLap: -1,
         lastSpeed: -1,
         lastDrawTime: 0,
+        lastLODState: -1,
       });
     }
 
@@ -1074,7 +1086,7 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
       const sessionToken = Math.random();
       (parent as any)._neonGateSession = sessionToken;
       this.gateLoader.load(
-        "/Meshy_AI_Futuristic_Neon_Gate_0614142038_texture.glb",
+        "Meshy_AI_Futuristic_Neon_Gate_0614142038_texture.glb",
         (gltf) => {
           if ((parent as any)._neonGateSession !== sessionToken) return;
 
@@ -1270,21 +1282,26 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
         }
       }
 
-      if (this.gateLoaded && dist < lodThreshold && this.gateInstMeshes.length > 0) {
+      const targetLOD = (this.gateLoaded && dist < lodThreshold && this.gateInstMeshes.length > 0) ? 1 : 0;
+
+      if (targetLOD === 1) {
         // High LOD: Align GLB gate centered perfectly over the gate position
         const scaleVal = (this.halfWidth * 2.5) / this.gateWidth;
-        dummy.position.set(-this.gateOffsetX * scaleVal, -this.gateMinY * scaleVal, -this.gateOffsetZ * scaleVal); // Grounded and centered using loaded bounds
-        dummy.rotation.set(0, 0, 0);
-        
-        // Scale proportionally to span the track beautiful width
-        dummy.scale.set(scaleVal, scaleVal, scaleVal);
-        dummy.updateMatrix();
+        if (item.lastLODState !== 1) {
+          dummy.position.set(-this.gateOffsetX * scaleVal, -this.gateMinY * scaleVal, -this.gateOffsetZ * scaleVal); // Grounded and centered using loaded bounds
+          dummy.rotation.set(0, 0, 0);
+          
+          // Scale proportionally to span the track beautiful width
+          dummy.scale.set(scaleVal, scaleVal, scaleVal);
+          dummy.updateMatrix();
 
-        // Premultiply by parent gateGroup worldmatrix to transform to worldspace coordinate perfectly
-        dummy.matrix.premultiply(item.gateGroup.matrixWorld);
+          // Premultiply by parent gateGroup worldmatrix to transform to worldspace coordinate perfectly
+          dummy.matrix.premultiply(item.gateGroup.matrixWorld);
 
-        for (let m = 0; m < this.gateInstMeshes.length; m++) {
-          this.gateInstMeshes[m].setMatrixAt(i, dummy.matrix);
+          for (let m = 0; m < this.gateInstMeshes.length; m++) {
+            this.gateInstMeshes[m].setMatrixAt(i, dummy.matrix);
+          }
+          (this as any)._gatesChanged = true;
         }
 
         // Hide procedural fallback since GLB is loaded and within range
@@ -1344,10 +1361,13 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
         }
       } else {
         // Low LOD or fallback: hide GLB mesh and show procedural gantry instead
-        if (this.gateLoaded) {
-          for (let m = 0; m < this.gateInstMeshes.length; m++) {
-            this.gateInstMeshes[m].setMatrixAt(i, this.invisibleMatrix);
+        if (item.lastLODState !== 0) {
+          if (this.gateLoaded) {
+            for (let m = 0; m < this.gateInstMeshes.length; m++) {
+              this.gateInstMeshes[m].setMatrixAt(i, this.invisibleMatrix);
+            }
           }
+          (this as any)._gatesChanged = true;
         }
         item.proceduralArch.visible = true;
         item.signMesh.position.set(0, 15.0, 0.4);
@@ -1364,15 +1384,17 @@ export class NeonSpectatorGatesSystem implements TrackSubsystem {
           for (const s of item.strobes) s.visible = false;
         }
       }
+      item.lastLODState = targetLOD;
     }
 
-    if (this.gateLoaded) {
+    if (this.gateLoaded && (this as any)._gatesChanged) {
       for (const instMesh of this.gateInstMeshes) {
         instMesh.instanceMatrix.needsUpdate = true;
         if (instMesh.computeBoundingSphere) {
           instMesh.computeBoundingSphere();
         }
       }
+      (this as any)._gatesChanged = false;
     }
   }
 }
@@ -1553,6 +1575,11 @@ export class NeonGeyserSystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    if (playerPos.distanceToSquared(this.group.position) > 160000) { // 400 units
+      return;
+    }
 
     // Counter-rotate the concentric geyser plumes & add pulsating expansion
     if (this.plumes.length >= 2) {
@@ -1749,7 +1776,7 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
     if (this.useGLB) {
       // Load Left Barriers (Star Riders)
       this.gltfLoader.load(
-        "/Meshy_AI_Star_Riders_0610201432_texture.glb",
+        "Meshy_AI_Star_Riders_0610201432_texture.glb",
         (gltf) => {
           if ((parent as any)._barriersSession !== sessionToken) return;
 
@@ -1797,7 +1824,7 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
 
       // Load Right Barriers (Neon Line on Concrete)
       this.gltfLoader.load(
-        "/Meshy_AI_Neon_Line_on_Concrete_0610201445_texture.glb",
+        "Meshy_AI_Neon_Line_on_Concrete_0610201445_texture.glb",
         (gltf) => {
           if ((parent as any)._barriersSession !== sessionToken) return;
 
@@ -1846,6 +1873,7 @@ export class RoadBarriersLODSystem implements TrackSubsystem {
   }
 
   update(dt: number, player: PlayerState) {
+    if (!this.useGLB) return;
     this.updateFrameCounter++;
     // Only run expensive LOD distance calculations every 4th frame to reduce CPU calculations substantially during racing. This drastically boosts FPS!
     if (this.updateFrameCounter % 4 !== 0 && this.leftLODState.length > 0) {

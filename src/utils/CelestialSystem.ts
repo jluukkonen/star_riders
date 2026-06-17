@@ -1,5 +1,8 @@
 import * as THREE from "three";
 import React from "react";
+import { Starfield } from "./Starfield";
+import { Aurora } from "./Aurora";
+import { GodRays } from "./GodRays";
 
 // MANDATORY INTEGRITY WARNING:
 // DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A Forensic Auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
@@ -13,6 +16,10 @@ export class CelestialSystem {
   public sunHaloOuterMesh!: THREE.Mesh;
   public sunMesh!: THREE.Mesh;
   public moonMesh!: THREE.Mesh;
+
+  private starfield: Starfield | null = null;
+  private aurora: Aurora | null = null;
+  private godrays: GodRays | null = null;
 
   constructor() {}
 
@@ -100,6 +107,18 @@ export class CelestialSystem {
     scene.add(this.starsGroup);
     (window as any)._starsGroup = this.starsGroup;
     (window as any)._starsList = this.starsList;
+
+    // Advanced Starfield (ported from tinyskies for denser, more realistic night sky with Milky Way/nebula)
+    this.starfield = new Starfield();
+    this.celestialGroup.add(this.starfield.group);
+
+    // Aurora (night sky curtains, driven by night weight)
+    this.aurora = new Aurora();
+    this.celestialGroup.add(this.aurora.group);
+
+    // God Rays (volumetric sun rays)
+    this.godrays = new GodRays();
+    this.celestialGroup.add(this.godrays.group);
   }
 
   public update(
@@ -279,6 +298,39 @@ export class CelestialSystem {
 
     if (globeDayNightTextRef.current) {
       globeDayNightTextRef.current.innerText = phaseText;
+    }
+
+    // Drive new VFX with night/day weights (globe mode only, but always safe)
+    const nightWeight = Math.max(0, Math.min(1, (-sinA + 0.45) / 0.9));
+    const dayWeight = 1 - nightWeight;
+
+    if (this.starfield) {
+      this.starfield.setOpacity(nightWeight);
+    }
+    if (this.aurora) {
+      this.aurora.setOpacity(nightWeight * 0.8);  // slightly softer aurora
+      const cam = (window as any)._mainCamera || new THREE.PerspectiveCamera();
+      this.aurora.update(dt, cam);
+    }
+    if (this.godrays && this.sunMesh) {
+      const sunWorldPos = this.sunMesh.getWorldPosition(new THREE.Vector3());
+      const globeCenter = new THREE.Vector3(0, 0, 0);  // approx center
+      this.godrays.update(elapsedTime, sunWorldPos, globeCenter, (this.sunMesh.material as THREE.MeshBasicMaterial).color.getHex(), targetSunIntensity);
+    }
+  }
+
+  public dispose() {
+    if (this.starfield) {
+      this.starfield.dispose();
+      this.celestialGroup.remove(this.starfield.group);
+    }
+    if (this.aurora) {
+      this.aurora.dispose();
+      this.celestialGroup.remove(this.aurora.group);
+    }
+    if (this.godrays) {
+      this.godrays.dispose();
+      this.celestialGroup.remove(this.godrays.group);
     }
   }
 }

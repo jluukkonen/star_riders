@@ -2,6 +2,8 @@ import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Orbit, Gamepad2, Zap, Cloud, MapPin, Route, Music, Volume2, VolumeX, Sparkles, Wrench } from "lucide-react";
 
+const SHOW_EXPERIMENTAL = false;
+
 interface MainMenuProps {
   appMode: string;
   setAppMode: (mode: any) => void;
@@ -56,14 +58,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               }`}
             >
               Change ▾
-            </button>
-            <button
-              onClick={() => setShowHangarGallery(true)}
-              className="px-3 py-2 flex items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/80 text-xs font-bold cursor-pointer transition-all active:scale-95 font-mono gap-1"
-              title="Open 3D Model Gallery Space"
-            >
-              <Sparkles className="w-3.5 h-3.5 fill-[#eb91aa]/20" />
-              <span>Hangar</span>
             </button>
             
             <div className="w-px h-6 bg-white/10 mx-1" />
@@ -153,126 +147,181 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
       {/* Course Menu Overlay */}
       {appMode === "menu" && (
-        <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center z-50 pointer-events-auto">
-          <div className="text-4xl font-black italic text-white mb-12 tracking-wide drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">
+        <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center z-50 pointer-events-auto select-none">
+          <div className="text-4xl font-black italic text-white mb-10 tracking-wide drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">
             SELECT COURSE
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-4 max-w-4xl px-4">
+          
+          <div className={SHOW_EXPERIMENTAL ? "flex flex-wrap items-center justify-center gap-4 max-w-4xl px-4" : "grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl px-6 w-full"}>
             <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#eb91aa] transition-all hover:scale-105 active:scale-95"
+              className={SHOW_EXPERIMENTAL 
+                ? "flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#eb91aa] transition-all hover:scale-105 active:scale-95"
+                : "flex flex-col items-center justify-center gap-4 bg-white/5 border border-white/20 p-8 rounded-2xl hover:bg-white/10 hover:border-[#eb91aa] transition-all hover:scale-105 active:scale-95 w-full text-center"
+              }
               onClick={() => {
                 setAppMode("track_oval");
                 (window as any)._appMode = "track_oval";
                 (window as any)._modeSwitch = "track";
               }}
             >
-              <Orbit className="w-10 h-10 text-[#eb91aa]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Oval
-              </div>
+              <Orbit className={SHOW_EXPERIMENTAL ? "w-10 h-10 text-[#eb91aa]" : "w-14 h-14 text-[#eb91aa] drop-shadow-[0_0_10px_rgba(235,145,170,0.4)]"} />
+              {SHOW_EXPERIMENTAL ? (
+                <div className="text-xs font-bold text-white tracking-widest uppercase">
+                  Oval
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <div className="text-sm font-black text-white tracking-widest uppercase">
+                    Oval
+                  </div>
+                  <div className="text-[10px] text-white/50 tracking-wider">
+                    Traditional High-Speed Circuit
+                  </div>
+                </div>
+              )}
             </button>
+
             <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffff] transition-all hover:scale-105 active:scale-95"
+              className={SHOW_EXPERIMENTAL 
+                ? "flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffff] transition-all hover:scale-105 active:scale-95"
+                : "flex flex-col items-center justify-center gap-4 bg-white/5 border border-white/20 p-8 rounded-2xl hover:bg-white/10 hover:border-[#00ffff] transition-all hover:scale-105 active:scale-95 w-full text-center"
+              }
               onClick={() => {
                 setAppMode("track_retro");
                 (window as any)._appMode = "track_retro";
                 (window as any)._modeSwitch = "track";
               }}
             >
-              <Gamepad2 className="w-10 h-10 text-[#00ffff]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Chroma Ridge
-              </div>
+              <Gamepad2 className={SHOW_EXPERIMENTAL ? "w-10 h-10 text-[#00ffff]" : "w-14 h-14 text-[#00ffff] drop-shadow-[0_0_10px_rgba(0,255,255,0.4)]"} />
+              {SHOW_EXPERIMENTAL ? (
+                <div className="text-xs font-bold text-white tracking-widest uppercase">
+                  Chroma Ridge
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <div className="text-sm font-black text-white tracking-widest uppercase">
+                    Chroma Ridge
+                  </div>
+                  <div className="text-[10px] text-white/50 tracking-wider">
+                    Retro Cyberpunk Ridge
+                  </div>
+                </div>
+              )}
             </button>
+
+            {SHOW_EXPERIMENTAL && (
+              <>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#44bbff] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_rail");
+                    (window as any)._appMode = "track_rail";
+                    (window as any)._modeSwitch = "track";
+                  }}
+                >
+                  <Zap className="w-10 h-10 text-[#44bbff]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Rails
+                  </div>
+                </button>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ff00ff] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_nebula");
+                    (window as any)._appMode = "track_nebula";
+                    (window as any)._modeSwitch = "track";
+                  }}
+                >
+                  <Cloud className="w-10 h-10 text-[#ff00ff]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Nebula
+                  </div>
+                </button>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ffff00] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_planner");
+                    (window as any)._appMode = "track_planner";
+                    (window as any)._modeSwitch = "track";
+                  }}
+                >
+                  <MapPin className="w-10 h-10 text-[#ffff00]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Planner
+                  </div>
+                </button>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#88cc88] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_custom");
+                    (window as any)._appMode = "track_custom";
+                    (window as any)._modeSwitch = "track";
+                  }}
+                >
+                  <Route className="w-10 h-10 text-[#88cc88]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Custom
+                  </div>
+                </button>
+              </>
+            )}
+
             <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#44bbff] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_rail");
-                (window as any)._appMode = "track_rail";
-                (window as any)._modeSwitch = "track";
-              }}
-            >
-              <Zap className="w-10 h-10 text-[#44bbff]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Rails
-              </div>
-            </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ff00ff] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_nebula");
-                (window as any)._appMode = "track_nebula";
-                (window as any)._modeSwitch = "track";
-              }}
-            >
-              <Cloud className="w-10 h-10 text-[#ff00ff]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Nebula
-              </div>
-            </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ffff00] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_planner");
-                (window as any)._appMode = "track_planner";
-                (window as any)._modeSwitch = "track";
-              }}
-            >
-              <MapPin className="w-10 h-10 text-[#ffff00]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Planner
-              </div>
-            </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#88cc88] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_custom");
-                (window as any)._appMode = "track_custom";
-                (window as any)._modeSwitch = "track";
-              }}
-            >
-              <Route className="w-10 h-10 text-[#88cc88]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Custom
-              </div>
-            </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95"
+              className={SHOW_EXPERIMENTAL 
+                ? "flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95"
+                : "flex flex-col items-center justify-center gap-4 bg-white/5 border border-white/20 p-8 rounded-2xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95 w-full text-center"
+              }
               onClick={() => {
                 setAppMode("track_abyss");
                 (window as any)._appMode = "track_abyss";
                 (window as any)._modeSwitch = "track";
               }}
             >
-              <Zap className="w-10 h-10 text-[#00ffcc]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Abyss Trench
-              </div>
+              <Zap className={SHOW_EXPERIMENTAL ? "w-10 h-10 text-[#00ffcc]" : "w-14 h-14 text-[#00ffcc] drop-shadow-[0_0_10px_rgba(0,255,204,0.4)]"} />
+              {SHOW_EXPERIMENTAL ? (
+                <div className="text-xs font-bold text-white tracking-widest uppercase">
+                  Abyss Trench
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <div className="text-sm font-black text-white tracking-widest uppercase">
+                    Abyss Trench
+                  </div>
+                  <div className="text-[10px] text-white/50 tracking-wider">
+                    Deep Space Obstacle Run
+                  </div>
+                </div>
+              )}
             </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ffcc00] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_mario");
-                (window as any)._appMode = "track_mario";
-                (window as any)._modeSwitch = "track";
-              }}
-            >
-              <Sparkles className="w-10 h-10 text-[#ffcc00]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Mario Circuit
-              </div>
-            </button>
-            <button
-              className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95"
-              onClick={() => {
-                setAppMode("track_builder");
-              }}
-            >
-              <Wrench className="w-10 h-10 text-[#00ffcc]" />
-              <div className="text-xs font-bold text-white tracking-widest uppercase">
-                Course Builder
-              </div>
-            </button>
+
+            {SHOW_EXPERIMENTAL && (
+              <>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#ffcc00] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_mario");
+                    (window as any)._appMode = "track_mario";
+                    (window as any)._modeSwitch = "track";
+                  }}
+                >
+                  <Sparkles className="w-10 h-10 text-[#ffcc00]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Mario Circuit
+                  </div>
+                </button>
+                <button
+                  className="flex flex-col items-center gap-3 bg-white/5 border border-white/20 p-5 rounded-xl hover:bg-white/10 hover:border-[#00ffcc] transition-all hover:scale-105 active:scale-95"
+                  onClick={() => {
+                    setAppMode("track_builder");
+                  }}
+                >
+                  <Wrench className="w-10 h-10 text-[#00ffcc]" />
+                  <div className="text-xs font-bold text-white tracking-widest uppercase">
+                    Course Builder
+                  </div>
+                </button>
+              </>
+            )}
           </div>
           <button
             className="mt-12 text-white/50 uppercase tracking-widest text-sm hover:text-white transition-colors cursor-pointer"
@@ -282,6 +331,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </button>
         </div>
       )}
+      
+      {/* Character Dropdown logic was here, assuming remaining logic matches existing codebase components */}
     </>
   );
 };

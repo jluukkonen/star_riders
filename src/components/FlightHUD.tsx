@@ -344,11 +344,11 @@ export const FlightHUD: React.FC<FlightHUDProps> = ({
                 <circle ref={playerDotRef} cx="0" cy="0" r="12" fill="white" className="shadow-lg drop-shadow-lg" />
               </svg>
             ) : (
-              <svg viewBox="-120 -100 240 280" className="w-full h-full opacity-80" preserveAspectRatio="xMidYMid meet">
-                <path d="M 100 70 L 100 -50 Q 80 -100 0 -50 L -70 -20 Q -100 0 -100 50 L -100 90 Q -90 140 -20 130 L 10 140 L 40 160 Q 80 190 100 130 Z" fill="none" stroke="#666666" strokeWidth="26" strokeLinejoin="round" />
-                <path d="M 100 70 L 100 -50 Q 80 -100 0 -50 L -70 -20 Q -100 0 -100 50 L -100 90 Q -90 140 -20 130 L 10 140 L 40 160 Q 80 190 100 130 Z" fill="none" stroke="#ff0000" strokeWidth="32" strokeDasharray="5,5" strokeLinejoin="round" className="opacity-50" />
-                <rect x="98" y="15" width="4" height="26" fill="white" className="opacity-80" />
-                <circle ref={playerDotRef} cx="100" cy="20" r="10" fill="white" className="shadow-lg drop-shadow-lg" />
+              <svg viewBox="-180 -275 390 535" className="w-full h-full opacity-90" preserveAspectRatio="xMidYMid meet">
+                <path d="M 130 70 L 130 35 L 130 15 L 130 -10 L 130 -35 L 130 -65 L 115 -95 L 95 -125 L 115 -155 L 135 -185 L 120 -210 L 100 -220 L 45 -235 L -10 -245 L -65 -225 L -105 -190 L -135 -130 L -145 -70 L -125 -15 L -135 25 L -115 55 L -75 80 L -40 95 L -10 105 L 15 110 L 35 110 L 65 110 L 95 110 L 125 110 L 155 90 L 175 60 L 185 25 L 165 -5 L 130 -15 L 90 -20 L 50 -5 L 20 20 L -5 45 L -35 72 L -30 100 L 0 122 L 35 145 L 65 155 L 75 185 L 55 215 L 75 230 L 110 200 L 130 135 Z" fill="none" stroke="#22d3ee" strokeWidth="26" strokeLinejoin="round" />
+                <path d="M 130 70 L 130 35 L 130 15 L 130 -10 L 130 -35 L 130 -65 L 115 -95 L 95 -125 L 115 -155 L 135 -185 L 120 -210 L 100 -220 L 45 -235 L -10 -245 L -65 -225 L -105 -190 L -135 -130 L -145 -70 L -125 -15 L -135 25 L -115 55 L -75 80 L -40 95 L -10 105 L 15 110 L 35 110 L 65 110 L 95 110 L 125 110 L 155 90 L 175 60 L 185 25 L 165 -5 L 130 -15 L 90 -20 L 50 -5 L 20 20 L -5 45 L -35 72 L -30 100 L 0 122 L 35 145 L 65 155 L 75 185 L 55 215 L 75 230 L 110 200 L 130 135 Z" fill="none" stroke="#d946ef" strokeWidth="32" strokeDasharray="5,5" strokeLinejoin="round" className="opacity-40" />
+                <line x1="117" y1="35" x2="143" y2="35" stroke="white" strokeWidth="4" className="opacity-80" />
+                <circle ref={playerDotRef} cx="130" cy="35" r="10" fill="white" className="shadow-lg drop-shadow-lg animate-pulse" />
               </svg>
             )}
           </div>

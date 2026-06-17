@@ -134,7 +134,7 @@ export class GameAvatar {
 
   private loadGLBModel(animalName: string) {
     // Standard kenney file pattern: assets/kenney_cube-pets_1.0/Models/GLB format/animal-{name}.glb
-    const url = `/assets/kenney_cube-pets_1.0/Models/GLB%20format/animal-${animalName}.glb`;
+    const url = `assets/kenney_cube-pets_1.0/Models/GLB%20format/animal-${animalName}.glb`;
     
     this.gltfLoader.load(
       url,

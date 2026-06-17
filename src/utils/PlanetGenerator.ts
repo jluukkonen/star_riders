@@ -799,29 +799,116 @@ export class PlanetGenerator {
     (window as any)._cloudClusters = cloudClustersList;
     scene.add(cloudsGroup);
 
-    // 4. Floating Islands
+    // 4. Floating Islands & Glimmering Collectible Stars (detailed procedural version from AI Studio code)
     const floatingIslandsGroup = new THREE.Group();
     this.groundGroup.add(floatingIslandsGroup);
 
-    const islandTopGeo = new THREE.CylinderGeometry(4.2, 5.0, 1.4, 7);
+    // Set up high-fidelity materials for the islands
     const islandTopMat = new THREE.MeshPhongMaterial({
       color: 0x82c875,
       flatShading: true,
       shininess: 0,
     });
-    const islandBottomGeo = new THREE.ConeGeometry(5.2, 5.5, 6);
-    islandBottomGeo.rotateX(Math.PI);
     const islandBottomMat = new THREE.MeshPhongMaterial({
       color: 0x6e5c53,
       flatShading: true,
       shininess: 0,
     });
 
-    const isldTrunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 0.8, 4);
-    const isldLeavesGeo = new THREE.ConeGeometry(0.7, 1.8, 4);
+    // Custom flora palettes
+    const isldTrunkMat = new THREE.MeshPhongMaterial({
+      color: 0x5a463b,
+      flatShading: true,
+      shininess: 0,
+    });
+    
+    const foliageColors = [0x228b22, 0x3cb371, 0xff5fb1, 0xdb58d0, 0xffb33b];
+    const foliageMats = foliageColors.map(color => new THREE.MeshPhongMaterial({
+      color: color,
+      flatShading: true,
+      shininess: 0,
+    }));
+
+    // Glowing alien crystal materials
+    const crystalMatPink = new THREE.MeshPhongMaterial({
+      color: 0xff00d4,
+      emissive: 0xff00d4,
+      emissiveIntensity: 1.8,
+      flatShading: true,
+      shininess: 30,
+    });
+
+    const crystalMatCyan = new THREE.MeshPhongMaterial({
+      color: 0x00f3ff,
+      emissive: 0x00f3ff,
+      emissiveIntensity: 1.8,
+      flatShading: true,
+      shininess: 30,
+    });
+
+    // Helper to generate a shiny gold collectible 3D Star (the "Shard" on top of islands)
+    const createProceduralStar = (): THREE.Group => {
+      const starGroup = new THREE.Group();
+      
+      const starMat = new THREE.MeshStandardMaterial({
+        color: 0xffd700,
+        roughness: 0.15,
+        metalness: 0.8,
+        emissive: 0xb59000,
+        emissiveIntensity: 0.6,
+        flatShading: true
+      });
+      
+      // Core ball
+      const centerGeo = new THREE.SphereGeometry(0.42, 6, 6);
+      const centerMesh = new THREE.Mesh(centerGeo, starMat);
+      starGroup.add(centerMesh);
+      
+      // Pointy cones extend symmetrically
+      const coneGeo = new THREE.ConeGeometry(0.24, 0.85, 4);
+      coneGeo.translate(0, 0.38, 0);
+      
+      // Top tip
+      const tTip = new THREE.Mesh(coneGeo, starMat);
+      starGroup.add(tTip);
+      
+      // 4 horizontal/slanted tips
+      for (let i = 0; i < 4; i++) {
+        const tip = new THREE.Mesh(coneGeo, starMat);
+        const angle = ((i + 1) * Math.PI * 2) / 5;
+        tip.rotation.z = angle;
+        starGroup.add(tip);
+      }
+      
+      // Radiant cyan neon orbit ring
+      const torusGeo = new THREE.TorusGeometry(0.85, 0.045, 4, 16);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x00f3ff,
+        transparent: true,
+        opacity: 0.8
+      });
+      const ring = new THREE.Mesh(torusGeo, ringMat);
+      ring.rotation.x = Math.PI / 3;
+      starGroup.add(ring);
+      
+      return starGroup;
+    };
+
+    // Shared Geometries to save memory / improve instantiation speed
+    const islandTopGeoPrimary = new THREE.CylinderGeometry(4.2, 5.0, 1.4, 7);
+    const islandTopGeoSecondary = new THREE.CylinderGeometry(1.8, 2.2, 0.8, 6);
+    const islandBottomGeoMain = new THREE.ConeGeometry(5.2, 5.5, 6);
+    islandBottomGeoMain.rotateX(Math.PI);
+
+    const boulderGeo = new THREE.IcosahedronGeometry(1.2, 0);
+    const isldTrunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.4, 4);
+    const foliageGeoMain = new THREE.ConeGeometry(0.9, 1.8, 5);
+    const foliageGeoSecondary = new THREE.ConeGeometry(0.6, 1.3, 5);
+    const isldCrystalGeo = new THREE.OctahedronGeometry(0.45, 0);
 
     const numIslands = 12;
     (window as any)._islandCollectibles = [];
+    (window as any)._floatingIslands = [];
 
     for (let index = 0; index < numIslands; index++) {
       const island = new THREE.Group();
@@ -839,20 +926,185 @@ export class PlanetGenerator {
       island.lookAt(new THREE.Vector3(0, 0, 0));
       island.rotateX(-Math.PI / 2);
 
-      const topMesh = new THREE.Mesh(islandTopGeo, islandTopMat);
+      // Varied island layouts: randomize tier positions, add chance for extra features or different configs
+      const layoutSeed = seededRandom();
+      const subX = 1.6 + layoutSeed * 1.4;
+      const subZ = -2.0 + seededRandom() * 1.5;
+      const extraTierChance = seededRandom() > 0.6;
+
+      // 1. PRIMARY FLAT TOP (MAIN DECK)
+      const topMesh = new THREE.Mesh(islandTopGeoPrimary, islandTopMat);
       topMesh.castShadow = true;
       topMesh.receiveShadow = true;
       island.add(topMesh);
 
-      const bottomMesh = new THREE.Mesh(islandBottomGeo, islandBottomMat);
+      // 2. PRIMARY UNDER-CONE (MAIN ROCKY PILLAR)
+      const bottomMesh = new THREE.Mesh(islandBottomGeoMain, islandBottomMat);
       bottomMesh.position.y = -2.85;
       bottomMesh.castShadow = true;
       island.add(bottomMesh);
 
-      // Trees and crystals removed (assets stripped for now).
-      // Platforms kept as simple floating islands.
+      // 3. ASYMMETRIC SECONDARY TIER DECK (STEPPED ELEVATION) - varied position
+      const subDeck = new THREE.Mesh(islandTopGeoSecondary, islandTopMat);
+      subDeck.position.set(subX, 0.45, subZ);
+      subDeck.castShadow = true;
+      subDeck.receiveShadow = true;
+      island.add(subDeck);
 
+      const subCone = new THREE.Mesh(new THREE.ConeGeometry(2.3, 2.8, 5), islandBottomMat);
+      subCone.rotateY(seededRandom() * Math.PI * 1.5); // more random rotation
+      subCone.rotateX(Math.PI);
+      subCone.position.set(subX, -1.15, subZ);
+      subCone.castShadow = true;
+      island.add(subCone);
+
+      // Extra layout variation: occasional third mini-tier or extra boulder cluster
+      if (extraTierChance) {
+        const miniDeck = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 0.6, 5), islandTopMat);
+        miniDeck.position.set(-subX * 0.6, 0.7, -subZ * 0.5);
+        miniDeck.castShadow = true;
+        miniDeck.receiveShadow = true;
+        island.add(miniDeck);
+        const miniCone = new THREE.Mesh(new THREE.ConeGeometry(1.6, 1.8, 4), islandBottomMat);
+        miniCone.rotateX(Math.PI);
+        miniCone.position.set(-subX * 0.6, -0.3, -subZ * 0.5);
+        miniCone.castShadow = true;
+        island.add(miniCone);
+      }
+
+      // 4. CRAGGY JAGGED BOULDERS ATTACHED TO UNDERSIDE (ORGANIC VARIATION)
+      const boulderCount = 2 + Math.floor(seededRandom() * 3);
+      for (let b = 0; b < boulderCount; b++) {
+        const boulder = new THREE.Mesh(boulderGeo, islandBottomMat);
+        const bRad = 2.4 + seededRandom() * 0.8;
+        const bAngle = seededRandom() * Math.PI * 2;
+        boulder.position.set(
+          Math.cos(bAngle) * bRad,
+          -1.5 - seededRandom() * 2.0,
+          Math.sin(bAngle) * bRad
+        );
+        boulder.scale.set(
+          0.7 + seededRandom() * 0.8,
+          0.7 + seededRandom() * 0.8,
+          0.7 + seededRandom() * 0.8
+        );
+        boulder.rotation.set(
+          seededRandom() * Math.PI,
+          seededRandom() * Math.PI,
+          seededRandom() * Math.PI
+        );
+        boulder.castShadow = true;
+        island.add(boulder);
+      }
+
+      // 5. STYLIZED LOW-POLY TREES SPAWNED ON FLAT DECKS
+      const treeCount = 2 + Math.floor(seededRandom() * 3);
+      for (let t = 0; t < treeCount; t++) {
+        const treeGroup = new THREE.Group();
+        
+        // Randomly place trees on main deck or sub deck
+        const onSubDeck = seededRandom() > 0.55;
+        if (onSubDeck) {
+          const tRadius = seededRandom() * 0.8;
+          const tAngle = seededRandom() * Math.PI * 2;
+          treeGroup.position.set(
+            2.2 + Math.cos(tAngle) * tRadius,
+            0.95 + 0.6, // elevated trunk center
+            -1.2 + Math.sin(tAngle) * tRadius
+          );
+        } else {
+          const tRadius = seededRandom() * 2.5;
+          const tAngle = seededRandom() * Math.PI * 2;
+          treeGroup.position.set(
+            Math.cos(tAngle) * tRadius,
+            0.7 + 0.6, // main deck center
+            Math.sin(tAngle) * tRadius
+          );
+        }
+
+        // Trunk
+        const trunkMesh = new THREE.Mesh(isldTrunkGeo, isldTrunkMat);
+        trunkMesh.castShadow = true;
+        treeGroup.add(trunkMesh);
+
+        // Foliage layers (colorful synth cones, rotated randomly)
+        const folMat = foliageMats[Math.floor(seededRandom() * foliageMats.length)];
+        
+        const f1 = new THREE.Mesh(foliageGeoMain, folMat);
+        f1.position.y = 1.0;
+        f1.rotation.y = seededRandom() * Math.PI;
+        f1.castShadow = true;
+        treeGroup.add(f1);
+
+        const f2 = new THREE.Mesh(foliageGeoSecondary, folMat);
+        f2.position.y = 1.9;
+        f2.rotation.y = seededRandom() * Math.PI;
+        f2.rotation.z = (seededRandom() - 0.5) * 0.15;
+        f2.castShadow = true;
+        treeGroup.add(f2);
+
+        const scaleNudge = 0.8 + seededRandom() * 0.5;
+        treeGroup.scale.set(scaleNudge, scaleNudge, scaleNudge);
+
+        island.add(treeGroup);
+      }
+
+      // 6. GLOWING NEON ALIEN CRYSTAL CLUSTERS INSIDE ROCKS
+      const crystalCount = 1 + Math.floor(seededRandom() * 2);
+      for (let cr = 0; cr < crystalCount; cr++) {
+        const cryMat = seededRandom() > 0.5 ? crystalMatPink : crystalMatCyan;
+        const crystal = new THREE.Mesh(isldCrystalGeo, cryMat);
+        
+        // Nestled on edges of main deck
+        const cAngle = seededRandom() * Math.PI * 2;
+        const cRadius = 3.6 + seededRandom() * 0.6;
+        crystal.position.set(
+          Math.cos(cAngle) * cRadius,
+          0.6,
+          Math.sin(cAngle) * cRadius
+        );
+        crystal.rotation.set(
+          (seededRandom() - 0.5) * 0.5,
+          seededRandom() * Math.PI,
+          0.4 + seededRandom() * 0.6 // pointing outward slightly
+        );
+        crystal.scale.set(
+          0.6 + seededRandom() * 0.6,
+          1.2 + seededRandom() * 1.0, // tall and slender
+          0.6 + seededRandom() * 0.6
+        );
+        island.add(crystal);
+      }
+
+      // 7. GLIMMERING GOLDEN COLLECTIBLE STAR (FLOAT HOVERING) - the Shard on top
+      // Rotates and sparkles, integrated with game coin loop for +50 Glimmer Shards
+      const starMesh = createProceduralStar();
+      starMesh.position.set(0, 4.2, 0); // hovering right above the island center
+      island.add(starMesh);
+
+      // Register collectible in global star array to activate pilot collect loop
+      (window as any)._islandCollectibles.push({
+        collected: false,
+        mesh: starMesh
+      });
+
+      // Assemble and add to group
       floatingIslandsGroup.add(island);
+
+      // Stash island object to process physics (hover bobs and thrust waves)
+      (window as any)._floatingIslands.push({
+        group: island,
+        basePos: pos.clone(),
+        norm: norm.clone(),
+        rotX: island.rotation.x,
+        rotY: island.rotation.y,
+        rotZ: island.rotation.z,
+        bobSpeed: 0.55 + seededRandom() * 0.8,
+        bobPhase: seededRandom() * Math.PI * 2,
+        bobAmt: 0.35 + seededRandom() * 0.3,
+        wakeTension: 0.0,
+        wakeOscillationVal: 0.0,
+      });
     }
 
     // Slimmed load for tile models only (props and POIs stripped).
@@ -896,10 +1148,10 @@ export class PlanetGenerator {
     const textureLoader = new THREE.TextureLoader();
     const variantTextures: { [key: string]: THREE.Texture } = {};
     const texturePromises = [
-      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Summer.png", (tex) => { variantTextures.summer = tex; resolve(); }); }),
-      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Fall.png", (tex) => { variantTextures.fall = tex; resolve(); }); }),
-      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval_Winter.png", (tex) => { variantTextures.winter = tex; resolve(); }); }),
-      new Promise<void>((resolve) => { textureLoader.load("/KayKit/tiles/textures/variants/hexagons_medieval.png", (tex) => { variantTextures.base = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("KayKit/tiles/textures/variants/hexagons_medieval_Summer.png", (tex) => { variantTextures.summer = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("KayKit/tiles/textures/variants/hexagons_medieval_Fall.png", (tex) => { variantTextures.fall = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("KayKit/tiles/textures/variants/hexagons_medieval_Winter.png", (tex) => { variantTextures.winter = tex; resolve(); }); }),
+      new Promise<void>((resolve) => { textureLoader.load("KayKit/tiles/textures/variants/hexagons_medieval.png", (tex) => { variantTextures.base = tex; resolve(); }); }),
     ];
 
     // Nature decoration assets — loaded globally for all biomes/regions

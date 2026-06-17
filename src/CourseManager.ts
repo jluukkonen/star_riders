@@ -84,7 +84,8 @@ export function applyTunnelClippingToMaterial(material: THREE.Material) {
          if (lenSq > 0.0001) {
            float t_param = clamp(dot(w, v) / lenSq, 0.0, 1.0);
            vec3 closest = A + t_param * v;
-           if (length(vCustomWorldPosition - closest) < R) {
+           vec3 diff = vCustomWorldPosition - closest;
+           if (dot(diff, diff) < R * R) {
              discard;
            }
          }
@@ -266,6 +267,7 @@ class PalmTreeLODSystem implements TrackSubsystem {
   private instancedMeshes: THREE.InstancedMesh[] = [];
   private activeMatrices: THREE.Matrix4[][] = [];
   private gltfLoaded = false;
+  private lastLODStates: number[] = [];
 
   private invisibleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
   private fallbackPlayerPos = new THREE.Vector3(0, 0, 0);
@@ -297,7 +299,7 @@ class PalmTreeLODSystem implements TrackSubsystem {
 
     const gltfLoader = new GLTFLoader();
     gltfLoader.load(
-      "/Meshy_AI_Starlit_Neon_Palm_Tre_0614142045_texture.glb",
+      "Meshy_AI_Starlit_Neon_Palm_Tre_0614142045_texture.glb",
       (gltf) => {
         if ((parent as any)._palmTreeSession !== sessionToken) return;
 
@@ -342,6 +344,7 @@ class PalmTreeLODSystem implements TrackSubsystem {
 
         const count = this.treePositions.length;
         this.activeMatrices = [];
+        this.lastLODStates = new Array(count).fill(-1);
 
         for (let i = 0; i < count; i++) {
           const treePos = this.treePositions[i];
@@ -400,37 +403,43 @@ class PalmTreeLODSystem implements TrackSubsystem {
     const playerPos = player.position || this.fallbackPlayerPos;
     const lodThreshold = 350; // Spacious threshold to keep gorgeous GLTF assets rendering fully within visible distances
     const invisibleMatrix = this.invisibleMatrix;
+    let instancedMeshesChanged = false;
 
     const count = this.treePositions.length;
     for (let i = 0; i < count; i++) {
       const treePos = this.treePositions[i];
       const dist = playerPos.distanceTo(treePos);
+      const targetLOD = (dist < lodThreshold && this.gltfLoaded && this.instancedMeshes.length > 0) ? 1 : 0;
 
-      if (dist < lodThreshold && this.gltfLoaded && this.instancedMeshes.length > 0) {
-        // Active Close LOD range: Show Instanced high-poly meshes, Hide procedural ones
-        for (let m = 0; m < this.instancedMeshes.length; m++) {
-          const mat = this.activeMatrices[i]?.[m];
-          if (mat) {
-            this.instancedMeshes[m].setMatrixAt(i, mat);
-          }
-        }
-        if (this.proceduralTrees[i]) {
-          this.proceduralTrees[i].visible = false;
-        }
-      } else {
-        // Far LOD range or GLTF still loading: Hide the instanced models, Show the lightweight procedural trees
-        if (this.gltfLoaded) {
+      if (targetLOD !== this.lastLODStates[i]) {
+        if (targetLOD === 1) {
+          // Active Close LOD range: Show Instanced high-poly meshes, Hide procedural ones
           for (let m = 0; m < this.instancedMeshes.length; m++) {
-            this.instancedMeshes[m].setMatrixAt(i, invisibleMatrix);
+            const mat = this.activeMatrices[i]?.[m];
+            if (mat) {
+              this.instancedMeshes[m].setMatrixAt(i, mat);
+            }
+          }
+          if (this.proceduralTrees[i]) {
+            this.proceduralTrees[i].visible = false;
+          }
+        } else {
+          // Far LOD range or GLTF still loading: Hide the instanced models, Show the lightweight procedural trees
+          if (this.gltfLoaded) {
+            for (let m = 0; m < this.instancedMeshes.length; m++) {
+              this.instancedMeshes[m].setMatrixAt(i, invisibleMatrix);
+            }
+          }
+          if (this.proceduralTrees[i]) {
+            this.proceduralTrees[i].visible = true;
           }
         }
-        if (this.proceduralTrees[i]) {
-          this.proceduralTrees[i].visible = true;
-        }
+        this.lastLODStates[i] = targetLOD;
+        instancedMeshesChanged = true;
       }
     }
 
-    if (this.gltfLoaded) {
+    if (this.gltfLoaded && instancedMeshesChanged) {
       for (let m = 0; m < this.instancedMeshes.length; m++) {
         this.instancedMeshes[m].instanceMatrix.needsUpdate = true;
         if (this.instancedMeshes[m].computeBoundingSphere) {
@@ -2284,7 +2293,7 @@ export function buildRetroTrack(trackGroup: THREE.Group): TrackBuildResult {
   const parallaxMountainsSystem = new ParallaxMountainsSystem();
   const holographicCitySystem = new HolographicCitySystem();
   const underTrackNeonSystem = new UnderTrackNeonSystem(curve, halfWidth);
-  const hoveringPolyhedraSystem = new HoveringPolyhedraSystem(curve, halfWidth, false, points);
+  const hoveringPolyhedraSystem = new HoveringPolyhedraSystem(curve, halfWidth, true, points);
   const neonSpectatorGatesSystem = new NeonSpectatorGatesSystem(curve, halfWidth, true);
   const neonGeyserSystem = new NeonGeyserSystem();
 
@@ -3326,139 +3335,147 @@ export function buildCustomTrack(trackGroup: THREE.Group): TrackBuildResult {
     }
   };
 
-  roadLoader.load("/roadStraight.glb", (gltf) => {
+  roadLoader.load("roadStraight.glb", (gltf) => {
     straightModel = gltf.scene;
     straightModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadCornerSmall.glb", (gltf) => {
+  roadLoader.load("roadCornerSmall.glb", (gltf) => {
     cornerModel = gltf.scene;
     cornerModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadStart.glb", (gltf) => {
+  roadLoader.load("roadStart.glb", (gltf) => {
     startModel = gltf.scene;
     startModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadStraightArrow.glb", (gltf) => {
+  roadLoader.load("roadStraightArrow.glb", (gltf) => {
     arrowModel = gltf.scene;
     arrowModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadStraightBridge.glb", (gltf) => {
+  roadLoader.load("roadStraightBridge.glb", (gltf) => {
     bridgeModel = gltf.scene;
     bridgeModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadBump.glb", (gltf) => {
+  roadLoader.load("roadBump.glb", (gltf) => {
     bumpModel = gltf.scene;
     bumpModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadCornerLarge.glb", (gltf) => {
+  roadLoader.load("roadCornerLarge.glb", (gltf) => {
     largeCornerModel = gltf.scene;
     largeCornerModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadCornerLarger.glb", (gltf) => {
+  roadLoader.load("roadCornerLarger.glb", (gltf) => {
     largerCornerModel = gltf.scene;
     largerCornerModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/treeLarge.glb", (gltf) => {
+  roadLoader.load("treeLarge.glb", (gltf) => {
     treeModel = gltf.scene;
     placeGridDecorations();
   });
 
-  roadLoader.load("/billboard.glb", (gltf) => {
+  roadLoader.load("billboard.glb", (gltf) => {
     billboardModel = gltf.scene;
     placeGridDecorations();
   });
 
-  roadLoader.load("/grandStand.glb", (gltf) => {
+  roadLoader.load("grandStand.glb", (gltf) => {
     grandstandModel = gltf.scene;
     placeGridDecorations();
   });
 
-  roadLoader.load("/lightPostModern.glb", (gltf) => {
+  roadLoader.load("lightPostModern.glb", (gltf) => {
     lightModel = gltf.scene;
     placeGridDecorations();
   });
 
-  roadLoader.load("/pylon.glb", (gltf) => {
+  roadLoader.load("pylon.glb", (gltf) => {
     pylonModel = gltf.scene;
     placeGridDecorations();
   });
@@ -3779,7 +3796,8 @@ export class Phase1AbyssSubsystem implements TrackSubsystem {
     embersGeom: THREE.BufferGeometry | null,
     emberSpeeds: number[],
     emberBaseXs: number[],
-    emberBaseZs: number[]
+    emberBaseZs: number[],
+    private checkpoints: THREE.Vector3[]
   ) {
     this.spotlights = spotlights;
     this.bubbles = bubbles;
@@ -3797,6 +3815,16 @@ export class Phase1AbyssSubsystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    let isNear = false;
+    for (const cp of this.checkpoints) {
+      if (playerPos.distanceToSquared(cp) < 160000) { // 400 units
+        isNear = true;
+        break;
+      }
+    }
+    if (!isNear) return;
 
     // 1. Pan the searchlights slowly
     this.spotlights.forEach((spot, idx) => {
@@ -3921,7 +3949,8 @@ export class Phase2TrenchPlungeSubsystem implements TrackSubsystem {
       radiusRange: number;
       basePos: THREE.Vector3;
       topY: number;
-    }[]
+    }[],
+    private checkpoints: THREE.Vector3[]
   ) {
     this.warningRings = warningRings;
     this.cyberJellyfish = cyberJellyfish;
@@ -3933,6 +3962,16 @@ export class Phase2TrenchPlungeSubsystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    let isNear = false;
+    for (const cp of this.checkpoints) {
+      if (playerPos.distanceToSquared(cp) < 160000) { // 400 units
+        isNear = true;
+        break;
+      }
+    }
+    if (!isNear) return;
 
     // 1. Scrolling warning flashes down the speed rings
     const flashSpeed = 4.5;
@@ -4317,7 +4356,13 @@ export function buildPhase2AbyssEnvironment(
     });
   });
 
-  return new Phase2TrenchPlungeSubsystem(warningRings, cyberJellyfish, plasmaCascades, chimneyEmbers);
+  return new Phase2TrenchPlungeSubsystem(
+    warningRings,
+    cyberJellyfish,
+    plasmaCascades,
+    chimneyEmbers,
+    [points[5], points[8], points[11]]
+  );
 }
 
 export class Phase3SeabedGardenSubsystem implements TrackSubsystem {
@@ -4331,7 +4376,8 @@ export class Phase3SeabedGardenSubsystem implements TrackSubsystem {
     bioAnemones: { mesh: THREE.Mesh; baseScale: THREE.Vector3; pulseSpeed: number; pulseOffset: number }[],
     runicColumns: { mesh: THREE.Mesh; ringMesh: THREE.Mesh; pulseSpeed: number; pulseOffset: number }[],
     bioArches: { mesh: THREE.Mesh; pulseSpeed: number; pulseOffset: number }[],
-    sporeParticles: { geom: THREE.BufferGeometry; count: number; speeds: number[]; basePositions: THREE.Vector3[] } | null
+    sporeParticles: { geom: THREE.BufferGeometry; count: number; speeds: number[]; basePositions: THREE.Vector3[] } | null,
+    private checkpoints: THREE.Vector3[]
   ) {
     this.bioAnemones = bioAnemones;
     this.runicColumns = runicColumns;
@@ -4343,6 +4389,16 @@ export class Phase3SeabedGardenSubsystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    let isNear = false;
+    for (const cp of this.checkpoints) {
+      if (playerPos.distanceToSquared(cp) < 160000) { // 400 units
+        isNear = true;
+        break;
+      }
+    }
+    if (!isNear) return;
 
     // 1. Animate bio-anemones breathing / swaying
     this.bioAnemones.forEach((ane) => {
@@ -4649,7 +4705,13 @@ export function buildPhase3AbyssEnvironment(
     basePositions,
   };
 
-  return new Phase3SeabedGardenSubsystem(bioAnemones, runicColumns, bioArches, sporeParticlesObj);
+  return new Phase3SeabedGardenSubsystem(
+    bioAnemones,
+    runicColumns,
+    bioArches,
+    sporeParticlesObj,
+    [points[11], points[17], points[23], points[29], points[35]]
+  );
 }
 
 export class Phase4ResearchDomeSubsystem implements TrackSubsystem {
@@ -4663,7 +4725,8 @@ export class Phase4ResearchDomeSubsystem implements TrackSubsystem {
     submersibles: { group: THREE.Group; index: number; radius: number; baseY: number }[],
     domeWire: THREE.Mesh | null,
     spineTubes: THREE.Mesh[],
-    ringElevators: { mesh: THREE.Mesh; speed: number; minY: number; maxY: number; offset: number }[]
+    ringElevators: { mesh: THREE.Mesh; speed: number; minY: number; maxY: number; offset: number }[],
+    private checkpoints: THREE.Vector3[]
   ) {
     this.submersibles = submersibles;
     this.domeWire = domeWire;
@@ -4675,6 +4738,16 @@ export class Phase4ResearchDomeSubsystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    let isNear = false;
+    for (const cp of this.checkpoints) {
+      if (playerPos.distanceToSquared(cp) < 160000) { // 400 units
+        isNear = true;
+        break;
+      }
+    }
+    if (!isNear) return;
 
     // 1. Dynamic orbital movement of the floating submersibles
     this.submersibles.forEach((sub) => {
@@ -4887,7 +4960,13 @@ export function buildPhase4AbyssEnvironment(
 
   trackGroup.add(stationGroup);
 
-  return new Phase4ResearchDomeSubsystem(submersiblesList, domeWire, spineTubes, ringElevators);
+  return new Phase4ResearchDomeSubsystem(
+    submersiblesList,
+    domeWire,
+    spineTubes,
+    ringElevators,
+    [points[35], points[38], spiralCenter]
+  );
 }
 
 export class Phase5MagmaDescentSubsystem implements TrackSubsystem {
@@ -4901,7 +4980,8 @@ export class Phase5MagmaDescentSubsystem implements TrackSubsystem {
     lavaPillars: { mesh: THREE.Mesh; pointLight: THREE.PointLight; baseScaleY: number; pulseSpeed: number; pulseOffset: number }[],
     laserArches: { mesh: THREE.Mesh; pulseSpeed: number; pulseOffset: number }[],
     finishGate: { ring: THREE.Group; panels: THREE.Mesh[]; lights: THREE.SpotLight[] } | null,
-    volcanicAsh: { geom: THREE.BufferGeometry; count: number; speeds: number[]; basePositions: THREE.Vector3[] } | null
+    volcanicAsh: { geom: THREE.BufferGeometry; count: number; speeds: number[]; basePositions: THREE.Vector3[] } | null,
+    private checkpoints: THREE.Vector3[]
   ) {
     this.lavaPillars = lavaPillars;
     this.laserArches = laserArches;
@@ -4913,6 +4993,16 @@ export class Phase5MagmaDescentSubsystem implements TrackSubsystem {
 
   update(dt: number, player: PlayerState) {
     this.time += dt;
+
+    const playerPos = player.position || new THREE.Vector3(0, 0, 0);
+    let isNear = false;
+    for (const cp of this.checkpoints) {
+      if (playerPos.distanceToSquared(cp) < 160000) { // 400 units
+        isNear = true;
+        break;
+      }
+    }
+    if (!isNear) return;
 
     // 1. Pulsate Lava Pillars magma glow and heat shimmer scale, and pointlights
     this.lavaPillars.forEach((pil) => {
@@ -5238,7 +5328,13 @@ export function buildPhase5AbyssEnvironment(
     basePositions: ashBasePositions,
   };
 
-  return new Phase5MagmaDescentSubsystem(lavaPillars, laserArches, finishGateObj, ashParticles);
+  return new Phase5MagmaDescentSubsystem(
+    lavaPillars,
+    laserArches,
+    finishGateObj,
+    ashParticles,
+    [points[35], points[40], points[43], points[46]]
+  );
 }
 
 export function buildPhase1AbyssEnvironment(
@@ -5851,7 +5947,8 @@ export function buildPhase1AbyssEnvironment(
     embersGeom,
     emberSpeeds,
     emberBaseXs,
-    emberBaseZs
+    emberBaseZs,
+    [points[0], points[2], points[4]]
   );
 }
 
@@ -6381,78 +6478,81 @@ export function buildAbyssTrenchTrack(trackGroup: THREE.Group): TrackBuildResult
   const phase5System = buildPhase5AbyssEnvironment(trackGroup, curve, points, trackWidth);
 
   // 8. Visual Pt markers at each anchor node for layout alignment and steering guidance
-  points.forEach((pt, index) => {
-    const markerGroup = new THREE.Group();
-    markerGroup.position.copy(pt);
+  const showPtMarkers = false;
+  if (showPtMarkers) {
+    points.forEach((pt, index) => {
+      const markerGroup = new THREE.Group();
+      markerGroup.position.copy(pt);
 
-    // Light emitting anchor base sphere with orbit guidelines
-    const sphereGeo = new THREE.SphereGeometry(1.2, 8, 8);
-    const sphereMat = new THREE.MeshBasicMaterial({
-      color: index === 0 ? 0xff3b98 : 0x00ffcc,
-      wireframe: true,
+      // Light emitting anchor base sphere with orbit guidelines
+      const sphereGeo = new THREE.SphereGeometry(1.2, 8, 8);
+      const sphereMat = new THREE.MeshBasicMaterial({
+        color: index === 0 ? 0xff3b98 : 0x00ffcc,
+        wireframe: true,
+      });
+      const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+      markerGroup.add(sphereMesh);
+
+      // Glowing vertical guide line
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 9, 0),
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({
+        color: index === 0 ? 0xff3b98 : 0x00ffee,
+        transparent: true,
+        opacity: 0.6,
+      });
+      const line = new THREE.Line(lineGeo, lineMat);
+      markerGroup.add(line);
+
+      // Canvas floating billboard sprite with high-glow index text
+      const canvas = document.createElement("canvas");
+      canvas.width = 128;
+      canvas.height = 64;
+      const ctx = canvas.getContext("2d")!;
+
+      // Translucent glassmorphic dark container
+      ctx.fillStyle = "rgba(1, 12, 28, 0.85)";
+      ctx.fillRect(0, 0, 128, 64);
+
+      // High brightness neon border stroke
+      ctx.strokeStyle = index === 0 ? "#ff3b98" : "#00ffcc";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, 124, 60);
+
+      // Subtle internal grid matrix (cool sub-grid visual alignment)
+      ctx.fillStyle = "rgba(0, 255, 255, 0.1)";
+      for (let x = 8; x < 128; x += 16) {
+        ctx.fillRect(x, 0, 1, 64);
+      }
+      for (let y = 8; y < 64; y += 16) {
+        ctx.fillRect(0, y, 128, 1);
+      }
+
+      // Modern text styling with radial neon glow
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 26px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = index === 0 ? "#ff3b98" : "#00ffcc";
+      ctx.shadowBlur = 8;
+      ctx.fillText("Pt " + index, 64, 32);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const spriteMat = new THREE.SpriteMaterial({
+        map: tex,
+        depthTest: true,
+      });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.raycast = function () {}; // Disable raycast to prevent camera/physics interference
+      sprite.scale.set(10, 5, 1);
+      sprite.position.set(0, 9, 0); // Raised floating position for perfect visual framing
+      markerGroup.add(sprite);
+
+      trackGroup.add(markerGroup);
     });
-    const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
-    markerGroup.add(sphereMesh);
-
-    // Glowing vertical guide line
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0, 9, 0),
-    ]);
-    const lineMat = new THREE.LineBasicMaterial({
-      color: index === 0 ? 0xff3b98 : 0x00ffee,
-      transparent: true,
-      opacity: 0.6,
-    });
-    const line = new THREE.Line(lineGeo, lineMat);
-    markerGroup.add(line);
-
-    // Canvas floating billboard sprite with high-glow index text
-    const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d")!;
-
-    // Translucent glassmorphic dark container
-    ctx.fillStyle = "rgba(1, 12, 28, 0.85)";
-    ctx.fillRect(0, 0, 128, 64);
-
-    // High brightness neon border stroke
-    ctx.strokeStyle = index === 0 ? "#ff3b98" : "#00ffcc";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, 124, 60);
-
-    // Subtle internal grid matrix (cool sub-grid visual alignment)
-    ctx.fillStyle = "rgba(0, 255, 255, 0.1)";
-    for (let x = 8; x < 128; x += 16) {
-      ctx.fillRect(x, 0, 1, 64);
-    }
-    for (let y = 8; y < 64; y += 16) {
-      ctx.fillRect(0, y, 128, 1);
-    }
-
-    // Modern text styling with radial neon glow
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 26px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.shadowColor = index === 0 ? "#ff3b98" : "#00ffcc";
-    ctx.shadowBlur = 8;
-    ctx.fillText("Pt " + index, 64, 32);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({
-      map: tex,
-      depthTest: true,
-    });
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.raycast = function () {}; // Disable raycast to prevent camera/physics interference
-    sprite.scale.set(10, 5, 1);
-    sprite.position.set(0, 9, 0); // Raised floating position for perfect visual framing
-    markerGroup.add(sprite);
-
-    trackGroup.add(markerGroup);
-  });
+  }
 
   return {
     boostSystem,
@@ -6695,56 +6795,60 @@ export function buildMarioTrack(trackGroup: THREE.Group): TrackBuildResult {
     }
   };
 
-  roadLoader.load("/roadStraight.glb", (gltf) => {
+  roadLoader.load("roadStraight.glb", (gltf) => {
     straightModel = gltf.scene;
     straightModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadCornerSmall.glb", (gltf) => {
+  roadLoader.load("roadCornerSmall.glb", (gltf) => {
     cornerModel = gltf.scene;
     cornerModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadStart.glb", (gltf) => {
+  roadLoader.load("roadStart.glb", (gltf) => {
     startModel = gltf.scene;
     startModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });
     buildGridTiles();
   });
 
-  roadLoader.load("/roadStraightArrow.glb", (gltf) => {
+  roadLoader.load("roadStraightArrow.glb", (gltf) => {
     arrowModel = gltf.scene;
     arrowModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-        if (child.material) {
-          (child.material as THREE.Material).side = THREE.DoubleSide;
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        if (mesh.material) {
+          (mesh.material as THREE.Material).side = THREE.DoubleSide;
         }
       }
     });

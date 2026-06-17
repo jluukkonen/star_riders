@@ -675,7 +675,7 @@ export class AISystem implements TrackSubsystem {
       const right = new THREE.Vector3().crossVectors(tangent, up).normalize();
 
       p.add(right.multiplyScalar(bot.offset));
-      p.y = 1.0;
+      p.y += 1.0;
 
       bot.mesh.position.copy(p);
 
